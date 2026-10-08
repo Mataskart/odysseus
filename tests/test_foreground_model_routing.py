@@ -3274,8 +3274,8 @@ def test_agent_builds_backup_prompt_and_tool_transport_before_attempt(monkeypatc
     assert requests[0]["kwargs"]["tools"]
     assert requests[1]["kwargs"]["tools"] is None
     backup_contents = [message.get("content") for message in requests[1]["messages"]]
-    assert "route prompt for backup-model" in backup_contents
-    assert "route prompt for selected-model" not in backup_contents
+    assert any(str(content).endswith("route prompt for backup-model") for content in backup_contents)
+    assert not any("route prompt for selected-model" in str(content) for content in backup_contents)
     assert any('"delta": "backup answer"' in chunk for chunk in chunks)
 
 

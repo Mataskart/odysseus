@@ -16,6 +16,8 @@ def log_directory() -> Path:
 
 
 def logging_enabled() -> bool:
+    if os.environ.get("PYTEST_CURRENT_TEST"):
+        return False
     flag = os.environ.get("ODYSSEUS_TURN_LOG", "").strip().lower()
     if flag in {"0", "false", "off", "no"}:
         return False
