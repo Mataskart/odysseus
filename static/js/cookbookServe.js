@@ -943,10 +943,13 @@ function _projectorGgufFiles(model) {
     .sort((a, b) => String(a.rel_path || a.name || '').localeCompare(String(b.rel_path || b.name || '')));
 }
 
+// Repo-root drafter first: repos like unsloth's ship the recommended quant at
+// the root and larger alternates (e.g. BF16) under an MTP/ subfolder.
 function _drafterGgufFiles(model) {
+  const depth = f => String(f.rel_path || f.name || '').split('/').length;
   return _ggufFilesForModel(model)
     .filter(f => (f.role || '') === 'drafter' || /(^|\/)mtp-[^/]*\.gguf$/i.test(f.rel_path || f.name || ''))
-    .sort((a, b) => String(a.rel_path || a.name || '').localeCompare(String(b.rel_path || b.name || '')));
+    .sort((a, b) => depth(a) - depth(b) || String(a.rel_path || a.name || '').localeCompare(String(b.rel_path || b.name || '')));
 }
 
 function _ggufFileLabel(file) {
