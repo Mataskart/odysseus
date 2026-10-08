@@ -28,14 +28,41 @@ def extract_pdf_text(file_path: str) -> str:
         return ""
 
 
+def _extract_docx_text(file_path: str) -> str:
+    import zipfile
+    from xml.etree import ElementTree
+
+    paragraph = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}p"
+    text_node = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}t"
+    try:
+        with zipfile.ZipFile(file_path) as archive:
+            document = archive.read("word/document.xml")
+        root = ElementTree.fromstring(document)
+    except Exception as exc:
+        logger.error(f"Failed to extract docx text from {file_path}: {exc}")
+        return ""
+    lines = []
+    for para in root.iter(paragraph):
+        line = "".join(node.text or "" for node in para.iter(text_node)).strip()
+        if line:
+            lines.append(line)
+    return "\n".join(lines)
+
+
 def extract_office_text(file_path: str) -> str:
     """Extract text from an Office/EPUB doc via the optional markitdown dep.
 
     Returns "" when markitdown is missing or extraction fails, mirroring
     extract_pdf_text — the indexer then simply skips the file's content.
+    A .docx still falls back to the Word XML inside the zip.
     """
     from src.markitdown_runtime import convert_to_markdown
-    return convert_to_markdown(file_path) or ""
+    text = convert_to_markdown(file_path) or ""
+    if text.strip():
+        return text
+    if file_path.lower().endswith(".docx"):
+        return _extract_docx_text(file_path)
+    return ""
 
 
 @dataclass

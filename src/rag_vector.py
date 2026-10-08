@@ -32,7 +32,7 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_FILE_EXTENSIONS: Set[str] = {
     '.txt', '.md', '.py', '.json', '.yaml', '.yml',
-    '.csv', '.html', '.css', '.js', '.pdf'
+    '.csv', '.html', '.css', '.js', '.pdf', '.docx'
 }
 
 # Tool-internal directories that match DEFAULT_FILE_EXTENSIONS but are never
@@ -520,6 +520,9 @@ class VectorRAG:
                         if ext == '.pdf':
                             from src.personal_docs import extract_pdf_text
                             content = extract_pdf_text(fpath)
+                        elif ext == '.docx':
+                            from src.personal_docs import extract_office_text
+                            content = extract_office_text(fpath)
                         else:
                             with open(fpath, 'r', encoding='utf-8') as f:
                                 content = f.read()
@@ -527,9 +530,12 @@ class VectorRAG:
                         if not content or not content.strip():
                             continue
 
+                        label = os.path.relpath(fpath, os.path.abspath(directory))
+                        if label.startswith(".."):
+                            label = fname
                         meta = {
                             'source': fpath,
-                            'filename': fname,
+                            'filename': label,
                             'directory': root,
                             'type': ext,
                         }
