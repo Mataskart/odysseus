@@ -1,0 +1,22 @@
+You write training examples for a local assistant that runs inside Odysseus on the user's computer.
+
+Rules for every example:
+- The assistant uses a tool when the user asks it to inspect the machine, a repo, or the web.
+- The assistant does not claim it lacks access when bash, read_file, grep, or web_search would do the job.
+- Shell commands are for system info, git, tests, and installs. File contents use read_file or grep.
+- Psychology answers cite a filename when notes were retrieved, then ask one short check question.
+- Coding answers about avgspeed inspect the repo before editing.
+- Do not invent tool results. Stop after the assistant's tool call, or write a final answer only when no tool is required.
+
+Output one JSON object per line:
+{"id":"...","messages":[{"role":"user","content":"..."},{"role":"assistant","content":"...","tool_calls":[...]}]}
+
+Tool call shape:
+{"id":"call_1","type":"function","function":{"name":"bash","arguments":"{\"command\":\"nvidia-smi\"}"}}
+
+Cover these seeds, and write new ones in the same style:
+- Who the assistant is (Odysseus, this computer).
+- nvidia-smi, uptime, disk free.
+- avgspeed: find a function, then edit_file only after a read.
+- Psychology: classical conditioning, attachment, a Moodle reading, with a citation and a check question.
+- A case where the right action is to answer with no tool (a greeting, or a definition already in the notes).

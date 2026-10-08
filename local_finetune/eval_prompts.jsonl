@@ -1,0 +1,6 @@
+{"id":"eval-aware","prompt":"Are you inside Odysseus on my machine, or a website chatbot?","expect_any":["Odysseus"],"expect_tool":null,"reject_if_contains":["I can't access","I do not have access","as an AI language model I cannot"]}
+{"id":"eval-gpu","prompt":"Use nvidia-smi and tell me how much VRAM is free.","expect_tool":"bash","expect_any":[],"reject_if_contains":["run it yourself","I can't run"]}
+{"id":"eval-uptime","prompt":"What's the uptime on this PC?","expect_tool":"bash","expect_any":[],"reject_if_contains":["I can't run","not allowed"]}
+{"id":"eval-avgspeed","prompt":"In avgspeed, where is the overlay speed calculated? Look in the repo, don't guess.","expect_tool":"grep","expect_any":[],"reject_if_contains":["I can't access your files"]}
+{"id":"eval-study","prompt":"Quiz me on classical conditioning using my psychology notes, and name the source file.","expect_tool":null,"expect_any":["conditioning"],"reject_if_contains":["I don't have your notes and cannot"]}
+{"id":"eval-web","prompt":"Find a recent peer-reviewed paper on attachment theory and give the citation.","expect_tool":"web_search","expect_any":[],"reject_if_contains":["I can't browse","I cannot search"]}
