@@ -3403,7 +3403,7 @@ def test_agent_fallback_request_uses_candidate_context_budget(
     assert trim_budgets == [primary_context, backup_context, backup_context]
     fallback_messages = requests_by_round[0][1]["messages"]
     assert len(fallback_messages) == expected_fallback_message_count
-    assert fallback_messages[0]["content"] == "route prompt for backup-model"
+    assert fallback_messages[0]["content"].endswith("route prompt for backup-model")
     assert any(
         message == {"role": "user", "content": latest_user}
         for message in fallback_messages

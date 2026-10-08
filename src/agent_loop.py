@@ -544,6 +544,23 @@ _WORKSPACE_TERMINUS_TOOLS = (
     | {"manage_skills", "ask_teacher", "web_search", "web_fetch", "ask_user", "update_plan"}
 )
 
+_DEFERRED_TOOL_TRIGGERS = {
+    "pipeline": re.compile(r"\b(pipeline|second opinion|multi[- ]?model|several models)\b", re.IGNORECASE),
+    "ask_teacher": re.compile(r"\b(teacher|escalate)\b", re.IGNORECASE),
+    "chat_with_model": re.compile(r"\b(chat with|ask|talk to)\b.{0,30}\bmodel\b", re.IGNORECASE),
+    "trigger_research": re.compile(r"\b(research|deep dive|investigate|look into)\b", re.IGNORECASE),
+    "manage_research": re.compile(r"\b(research|deep dive)\b", re.IGNORECASE),
+}
+
+
+def _drop_deferred_tools(tool_names, user_text):
+    """Heavy multi-step tools stay hidden unless the user's words ask for them."""
+    return {
+        name for name in tool_names
+        if name not in _DEFERRED_TOOL_TRIGGERS or _DEFERRED_TOOL_TRIGGERS[name].search(user_text or "")
+    }
+
+
 def _keep_tools_for_domains(tool_names, domains):
     """Keep tools from matched domains. Unclassified tools such as MCP stay."""
     if not tool_names or not domains:
@@ -4112,6 +4129,7 @@ async def stream_agent_loop(
     if _relevant_tools is not None and _intent_domains:
         _before = set(_relevant_tools)
         _relevant_tools = _keep_tools_for_domains(_relevant_tools, _intent_domains)
+        _relevant_tools = _drop_deferred_tools(_relevant_tools, _retrieval_query or _last_user)
         _dropped = sorted(_before - _relevant_tools)
         if _dropped:
             logger.info("[tool-rag] Dropped tools outside matched domains %s: %s", sorted(_intent_domains), _dropped)
