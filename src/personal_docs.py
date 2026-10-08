@@ -122,6 +122,34 @@ def tokenize(s: str) -> Set[str]:
     tokens = re.findall(r"[A-Za-z0-9_\-]+", text.lower())
     return set(t for t in tokens if t not in config.STOP_WORDS and len(t) > 1)
 
+def catalog_personal_files(
+    personal_dir: str,
+    extensions: Tuple[str, ...] = config.DEFAULT_EXTENSIONS
+) -> List[Dict[str, Any]]:
+    """Names and sizes for the folder list. Does not read file contents."""
+    files = []
+    for root, dirs, names in os.walk(personal_dir):
+        prune_index_dirs(dirs)
+        for name in sorted(names):
+            if not is_indexable_file(name):
+                continue
+            path = os.path.join(root, name)
+            if not os.path.isfile(path):
+                continue
+            if not any(name.lower().endswith(ext) for ext in extensions):
+                continue
+            if name == "config.json":
+                continue
+            display = os.path.relpath(path, personal_dir)
+            files.append({
+                "name": display,
+                "path": path,
+                "size": os.path.getsize(path),
+                "chunks": [],
+            })
+    return files
+
+
 def load_personal_index(
     personal_dir: str,
     extensions: Tuple[str, ...] = config.DEFAULT_EXTENSIONS
@@ -430,8 +458,9 @@ class PersonalDocsManager:
                 logger.warning(f"Path is not a directory: {directory}")
                 continue
 
-            # Load files from this directory
-            dir_files = load_personal_index(directory)
+            # Names only. These folders are already in the vector index;
+            # reading every PDF here repeats that work on each startup.
+            dir_files = catalog_personal_files(directory)
             for f in dir_files:
                 if os.path.abspath(f.get("path", "")) in self.excluded_files:
                     continue

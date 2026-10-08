@@ -919,7 +919,7 @@ function _syncToggleUI(name, state) {
 }
 
 async function _quickToggle(name) {
-  const toggleMap = { web: 'web-toggle', bash: 'bash-toggle', research: 'research-toggle' };
+  const toggleMap = { web: 'web-toggle', bash: 'bash-toggle', research: 'research-toggle', rag: 'rag-toggle' };
   const chk = document.getElementById(toggleMap[name]);
   if (!chk) return false;
   chk.checked = !chk.checked;
@@ -930,7 +930,7 @@ async function _quickToggle(name) {
 }
 
 async function _applyToggle(name, val) {
-  const toggleMap = { web: 'web-toggle', bash: 'bash-toggle', research: 'research-toggle' };
+  const toggleMap = { web: 'web-toggle', bash: 'bash-toggle', research: 'research-toggle', rag: 'rag-toggle' };
   const chk = document.getElementById(toggleMap[name]);
   if (!chk) return;
   const newState = val === 'on' ? true : val === 'off' ? false : !chk.checked;
@@ -1882,6 +1882,16 @@ async function _cmdShell(args, ctx) {
 }
 
 // ── RAG ──
+
+async function _cmdRagOn(args, ctx) {
+  await _applyToggle('rag', 'on');
+  return true;
+}
+
+async function _cmdRagOff(args, ctx) {
+  await _applyToggle('rag', 'off');
+  return true;
+}
 
 async function _cmdRagList(args, ctx) {
   const res = await fetch(`${API_BASE}/api/personal`, { credentials: 'same-origin' });
@@ -5826,9 +5836,11 @@ const COMMANDS = {
     alias: [],
     category: 'RAG',
     hidden: true,
-    help: 'Manage document indexing',
+    help: 'Search notes, or manage indexed folders',
     default: 'list',
     subs: {
+      'on':     { handler: _cmdRagOn,     alias: ['enable'],   help: 'Search notes on each question', usage: '/rag on' },
+      'off':    { handler: _cmdRagOff,    alias: ['disable'],  help: 'Stop searching notes',  usage: '/rag off' },
       'list':   { handler: _cmdRagList,   alias: ['ls'],       help: 'List indexed files',    usage: '/rag list' },
       'add':    { handler: _cmdRagAdd,    alias: [],           help: 'Add directory',         usage: '/rag add /path' },
       'remove': { handler: _cmdRagRemove, alias: ['rm'],       help: 'Remove directory',      usage: '/rag remove /path' }
