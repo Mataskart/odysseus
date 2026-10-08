@@ -527,6 +527,10 @@ def tool_result_should_arm_gate(
     capabilities = capabilities_for_action(tool_name, content)
     if capabilities.result_integrity is ResultIntegrity.SYSTEM:
         return False
+    # Local command and file output is the owner's own machine, not a remote
+    # source. Only external content (web, email, browser, MCP...) arms the gate.
+    if capabilities.result_integrity is ResultIntegrity.WORKSPACE_UNTRUSTED:
+        return False
     if tool_result_is_successful(result):
         return True
     # ``format_tool_result`` serializes every additional structured field, so
