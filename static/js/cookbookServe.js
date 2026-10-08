@@ -943,6 +943,12 @@ function _projectorGgufFiles(model) {
     .sort((a, b) => String(a.rel_path || a.name || '').localeCompare(String(b.rel_path || b.name || '')));
 }
 
+function _drafterGgufFiles(model) {
+  return _ggufFilesForModel(model)
+    .filter(f => (f.role || '') === 'drafter' || /(^|\/)mtp-[^/]*\.gguf$/i.test(f.rel_path || f.name || ''))
+    .sort((a, b) => String(a.rel_path || a.name || '').localeCompare(String(b.rel_path || b.name || '')));
+}
+
 function _ggufFileLabel(file) {
   const base = (file.name || file.rel_path || '').split('/').pop();
   const size = _formatGgufSize(file.size_bytes);
@@ -1883,6 +1889,9 @@ function _rerenderCachedModels() {
           // that the backend serve-command validator must reject as unsafe.
           const selectedProjector = _projectorGgufFiles(m)[0];
           f._mmproj_path = selectedProjector ? _selectedGgufExpr(m, repo, selectedProjector.rel_path) : '';
+          // Separate MTP drafter (e.g. Gemma 4's mtp-*.gguf); Qwen MTP GGUFs embed the heads instead.
+          const selectedDrafter = _drafterGgufFiles(m)[0];
+          f._mtp_draft_path = selectedDrafter ? _selectedGgufExpr(m, repo, selectedDrafter.rel_path) : '';
         }
         if (f.reasoning_parser) {
           const _rpEl2 = panel.querySelector('[data-field="reasoning_parser"]');

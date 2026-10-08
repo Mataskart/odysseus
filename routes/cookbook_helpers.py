@@ -395,6 +395,7 @@ def _cached_model_scan_script(model_dirs: list[str] | None = None, add_hf_cache:
         "def gguf_role(name):",
         "    n = name.lower()",
         "    if n.startswith('mmproj') or 'mmproj' in n: return 'projector'",
+        "    if n.startswith('mtp-'): return 'drafter'",
         "    return 'model'",
         "def gguf_quant(name):",
         "    m = re.search(r'(?i)(UD-)?(IQ[0-9]_[A-Z0-9_]+|Q[0-9](?:_[A-Z0-9]+)+|BF16|F16|FP16|F32|Q8_0)', name)",

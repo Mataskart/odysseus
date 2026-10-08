@@ -891,6 +891,7 @@ export function _buildServeCmd(f, modelName, backend) {
     if (f.llama_speculative_mtp) {
       const specTokens = parseInt(f.llama_spec_tokens, 10);
       const specN = Number.isFinite(specTokens) && specTokens > 0 ? specTokens : 3;
+      if (f._mtp_draft_path) _lcExtra += ` --model-draft "${f._mtp_draft_path}"`;
       _lcExtra += ` --spec-type draft-mtp --spec-draft-n-max ${specN}`;
     }
     // Vision: serve the multimodal projector so the model can read images. The
