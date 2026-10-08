@@ -172,6 +172,8 @@ def load_personal_index(
                 continue
             if not any(name.lower().endswith(ext) for ext in extensions):
                 continue
+            if name in ("indexed_directories.json", "excluded_files.json"):
+                continue
             size = os.path.getsize(p)
             ext = os.path.splitext(name)[1].lower()
             if ext == ".pdf":
