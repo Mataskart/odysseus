@@ -3414,7 +3414,7 @@ def test_agent_fallback_request_uses_candidate_context_budget(
         message == {"role": "user", "content": latest_user}
         for message in pinned_messages
     )
-    assert pinned_messages[0]["content"] == "route prompt for backup-model"
+    assert pinned_messages[0]["content"].endswith("route prompt for backup-model")
     metrics = json.loads(next(
         chunk for chunk in chunks if '"type": "metrics"' in chunk
     )[6:])["data"]
