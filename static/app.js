@@ -10,8 +10,8 @@ import modelsModule from './js/models.js?v=20260715startupcalm2';
 import ragModule from './js/rag.js';
 import presetsModule from './js/presets.js';
 import searchModule from './js/search.js';
-import chatModule from './js/chat.js?v=20261008ragon';
-import compareModule from './js/compare/index.js?v=20260819approvalcontrol1';
+import chatModule from './js/chat.js?v=20261008ragbtn';
+import compareModule from './js/compare/index.js?v=20261008ragbtn';
 import documentModule from './js/document.js?v=20260815approvalsave1';
 import searchChatModule from './js/search-chat.js';
 import { makeWindowDraggable } from './js/windowDrag.js';
@@ -1746,6 +1746,7 @@ function initializeEventListeners() {
   const TOOL_TOGGLE_TOAST_LABELS = {
     web: 'Web search',
     bash: 'Shell',
+    rag: 'RAG',
   };
 
   function showToolToggleToast(stateKey, active) {
@@ -2029,10 +2030,12 @@ function initializeEventListeners() {
     const overflow = el('overflow-rag-btn');
     const chk = el('rag-toggle');
     if (chk) chk.checked = active;
-    if (indicator) {
-      indicator.style.display = active ? '' : 'none';
-      indicator.classList.toggle('active', active);
+    const toolbar = el('rag-toolbar-btn');
+    if (toolbar) {
+      toolbar.classList.toggle('active', active);
+      toolbar.setAttribute('aria-pressed', String(active));
     }
+    if (indicator) indicator.style.display = 'none';
     if (overflow) overflow.classList.toggle('active', active);
     const s = loadToggleState(); s.rag = active; saveToggleState(s);
     updatePlusDot();
@@ -2265,7 +2268,7 @@ function initializeEventListeners() {
     if (!inputLeft || !overflowMenu || !overflowWrapper) return;
 
     // Buttons that can be collapsed (in reverse priority — last collapsed first)
-    const collapsibleIds = ['bash-toggle-btn', 'web-toggle-btn'];
+    const collapsibleIds = ['rag-toolbar-btn', 'web-toggle-btn', 'bash-toggle-btn'];
     const collapsibleBtns = collapsibleIds.map(id => el(id)).filter(Boolean);
     // Map of toolbar btn id → overflow mirror element (created dynamically)
     const overflowMirrors = new Map();
@@ -2493,6 +2496,15 @@ function initializeEventListeners() {
   if (ragIndicatorBtn) {
     ragIndicatorBtn.addEventListener('click', () => {
       _syncRagIndicator(false);
+    });
+  }
+  const ragToolbarBtn = el('rag-toolbar-btn');
+  if (ragToolbarBtn) {
+    ragToolbarBtn.addEventListener('click', () => {
+      const chk = el('rag-toggle');
+      const turningOn = chk ? !chk.checked : true;
+      _syncRagIndicator(turningOn);
+      showToolToggleToast('rag', turningOn);
     });
   }
 
