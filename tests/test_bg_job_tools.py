@@ -165,7 +165,6 @@ def test_bg_job_commands_are_not_low_signal(msg):
 
 
 @pytest.mark.parametrize("msg", [
-    "run this in the background",   # launching, not managing
     "find me a job listing",        # unrelated use of "job"
 ])
 def test_non_bg_messages_do_not_trip_files_domain(msg):

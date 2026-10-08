@@ -1447,6 +1447,9 @@ def _classify_agent_request(messages: List[Dict], last_user: str) -> Dict[str, o
         domains.add("sessions")
     if has(r"\b(file|folder|directory|repo|git|grep|find in files|read file|edit file|shell|terminal|bash)\b"):
         domains.add("files")
+    if has(r"\b(run|execute|command|commands|cli|nvidia-smi|systemctl|journalctl|pacman|paru|yay|flatpak|install|uninstall|"
+           r"process|processes|pid|kill|service|services|daemon|cpu|gpu|vram|disk|disks|uptime|ps|htop|df|du|ports?|sudo|packages?)\b"):
+        domains.add("files")
     if has(
         r"\b(run|execute|test|debug|fix|save|create|edit|read|open)\b.{0,40}\b("
         r"python|javascript|typescript|java|c\+\+|cpp|c#|csharp|rust|go|golang|"
@@ -3871,13 +3874,14 @@ async def stream_agent_loop(
         from src.tool_index import ALWAYS_AVAILABLE
         if workspace:
             # An active workspace IS the file-work signal: a vague "look at the
-            # project" means explore this folder. Surface only the READ-ONLY file
-            # tools (intersection with the plan-mode read-only allowlist) so the
-            # agent can investigate; write/shell tools stay out until the request
-            # actually calls for them (RAG retrieval adds those on a real ask).
+            # project" means explore this folder. Surface the READ-ONLY file
+            # tools (intersection with the plan-mode read-only allowlist) plus
+            # bash/python so a request the keyword classifier missed can still
+            # run a command. disabled_tools still strips them when shell is off.
             _relevant_tools = set(ALWAYS_AVAILABLE)
             from src.tool_security import PLAN_MODE_READONLY_TOOLS
             _relevant_tools |= (_DOMAIN_TOOL_MAP["files"] & PLAN_MODE_READONLY_TOOLS)
+            _relevant_tools |= {"bash", "python"}
             logger.info("[tool-rag] Low-signal but workspace active; including read-only file tools")
         else:
             # Don't short-circuit: fall through to RAG retrieval below.

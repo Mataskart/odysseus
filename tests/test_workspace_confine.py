@@ -343,11 +343,12 @@ def test_low_signal_with_workspace_surfaces_readonly_file_tools(monkeypatch):
     assert "read_file" in names
     assert "get_workspace" in names
     assert "grep" in names
-    # write/shell tools do NOT surface on a vague message
+    # file-write tools do NOT surface on a vague message
     assert "write_file" not in names
     assert "edit_file" not in names
-    assert "bash" not in names
-    assert "python" not in names
+    # shell stays available so commands the keyword classifier misses still run
+    assert "bash" in names
+    assert "python" in names
 
 
 def test_workspace_coding_request_surfaces_edit_and_verify_tools(monkeypatch):
