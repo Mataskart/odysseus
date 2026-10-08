@@ -846,4 +846,20 @@ def setup_history_routes(session_manager, upload_handler=None) -> APIRouter:
             logger.error(f"Manual compact error {session_id}: {e}")
             raise HTTPException(500, str(e))
 
+    @router.post("/api/turns/flag")
+    async def flag_bad_turn(request: Request):
+        """Record a session and message id the user marked as a bad reply."""
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        if not isinstance(body, dict):
+            body = {}
+        from src.turn_log import record_flag
+        record_flag(
+            session_id=str(body.get("session_id") or ""),
+            message_id=str(body.get("message_id") or ""),
+        )
+        return {"ok": True}
+
     return router

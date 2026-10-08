@@ -2245,6 +2245,20 @@ def setup_chat_routes(
                                 yield f'data: {json.dumps({"type": "metrics", "data": last_metrics})}\n\n'
                             if full_response:
                                 _commit_chat_compaction(_actual_candidate_index)
+                                if not incognito:
+                                    try:
+                                        from src.turn_log import record_turn
+                                        record_turn(
+                                            kind="chat",
+                                            session_id=session,
+                                            model=_actual_model or sess.model,
+                                            messages=messages,
+                                            response=full_response,
+                                            tool_events=[],
+                                            offered_tools=[],
+                                        )
+                                    except Exception:
+                                        logger.warning("turn log failed", exc_info=True)
                                 _metrics_to_save = dict(last_metrics or {})
                                 if thinking_response.strip() and not _metrics_to_save.get("thinking"):
                                     _metrics_to_save["thinking"] = thinking_response.strip()
@@ -2347,6 +2361,7 @@ def setup_chat_routes(
                         active_document=active_doc,
                         active_email=active_email_ctx,
                         session_id=session,
+                        log_turns=not incognito,
                         history_session=sess,
                         disabled_tools=disabled_tools if disabled_tools else None,
                         tool_policy=tool_policy,

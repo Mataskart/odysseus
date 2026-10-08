@@ -44,6 +44,9 @@ DEFAULT_SETTINGS = {
     # have been observed inventing signatures and sending to real
     # recipients without confirmation.
     "agent_email_confirm": True,
+    # Full turn copies for later fine-tuning. Off unless the operator opts in.
+    # Writes outside the repo. See src/turn_log.py.
+    "turn_log_enabled": False,
     "image_gen_enabled": False,
     "image_model": "",
     "image_quality": "medium",

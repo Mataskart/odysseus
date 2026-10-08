@@ -8,7 +8,11 @@ from typing import List, Dict, Any, Optional, Tuple
 from src.chat_helpers import extract_urls
 from src.youtube_handler import is_youtube_url
 from src.search import comprehensive_web_search, fetch_webpage_content
-from src.prompt_security import UNTRUSTED_CONTEXT_POLICY, untrusted_context_message
+from src.prompt_security import (
+    ODYSSEUS_CHAT_NOTE,
+    UNTRUSTED_CONTEXT_POLICY,
+    untrusted_context_message,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -306,6 +310,11 @@ class ChatProcessor:
             "role": "system",
             "content": UNTRUSTED_CONTEXT_POLICY,
         })
+        if not agent_mode:
+            preface.append({
+                "role": "system",
+                "content": ODYSSEUS_CHAT_NOTE,
+            })
 
         # Memory: core pinned facts + relevant pinned/extended recall.
         self._last_used_memories = []  # track what was injected
@@ -325,6 +334,7 @@ class ChatProcessor:
                         "Pinned memory context. Some pinned memories are only "
                         f"included when relevant:\n- {pinned_text}"
                     ),
+                    arm_tool_gate=False,
                 ))
                 for m in selected_pinned:
                     self._last_used_memories.append({"text": m["text"], "category": m.get("category", "fact"), "type": "pinned"})
@@ -342,6 +352,7 @@ class ChatProcessor:
                             "Memory context. Do not reference unless the user asks "
                             f"about these topics.\n{ext_text}"
                         ),
+                        arm_tool_gate=False,
                     ))
                     for m in relevant:
                         self._last_used_memories.append({"text": m["text"], "category": m.get("category", "fact"), "type": "recalled"})
@@ -384,6 +395,7 @@ class ChatProcessor:
                         preface.append(untrusted_context_message(
                             "retrieved documents",
                             rag_content,
+                            arm_tool_gate=False,
                         ))
             except Exception as e:
                 logger.warning(f"RAG retrieval failed: {e}")

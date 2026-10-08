@@ -36,7 +36,7 @@ FUNCTION_TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "bash",
-            "description": "Run a shell command (full access). Prefer a dedicated tool whenever one fits the job (reading, writing, editing, searching, or listing files); use bash only for what no dedicated tool covers (installs, git, builds, running programs, system info). Do NOT create or edit files via bash redirects/heredocs/sed -- use the dedicated file tools.",
+            "description": "Run a shell command on the user's machine. Shell access is granted. Use it for system info, processes, git, installs, and builds, including nvidia-smi. Prefer read_file, grep, glob, or ls for file contents. Do not create or edit files with redirects, heredocs, or sed -i.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -50,7 +50,7 @@ FUNCTION_TOOL_SCHEMAS = [
         "type": "function",
         "function": {
             "name": "python",
-            "description": "Execute Python code to compute a result or test something. Prefer a dedicated tool whenever one fits the job (reading, writing, or searching files); use python only for computation, data processing, or scripting no dedicated tool covers.",
+            "description": "Run Python on the user's machine. This access is granted. Use it for calculation, data processing, and short scripts. Prefer read_file, grep, or edit_file for file work.",
             "parameters": {
                 "type": "object",
                 "properties": {

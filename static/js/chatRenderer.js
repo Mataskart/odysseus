@@ -1757,6 +1757,21 @@ export function createMsgFooter(msgElement) {
       e.stopPropagation();
       if (window.chatModule?.deleteMessage) window.chatModule.deleteMessage(msgElement);
     }},
+    { id: 'flag', icon: '\u2691', title: 'Flag bad reply', cls: 'msg-action-btn', handler(e) {
+      e.stopPropagation();
+      const btn = e.currentTarget;
+      const sessionId = window.sessionModule?.getCurrentSessionId?.() || '';
+      const messageId = msgElement.dataset.dbId || '';
+      fetch('/api/turns/flag', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ session_id: sessionId, message_id: messageId }),
+      }).then((res) => {
+        btn.textContent = res.ok ? '\u2713' : '!';
+      }).catch(() => {
+        btn.textContent = '!';
+      });
+    }},
   ];
 
   // Filter out unavailable actions (e.g. TTS when not enabled)
