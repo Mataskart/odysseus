@@ -2406,23 +2406,10 @@ function initializeEventListeners() {
 	    const textarea = el('message');
 	    const inputBottom = document.querySelector('.chat-input-bottom');
 	    const _isMobile = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
-	    let _placeholderHintOn = false;
 
 	    function setComposerPlaceholder(width) {
 	      if (!textarea) return;
-	      if (_isMobile && _placeholderHintOn) {
-	        textarea.setAttribute('placeholder', 'Swipe to toggle plan');
-	        return;
-	      }
 	      textarea.setAttribute('placeholder', width < PLACEHOLDER_COMPACT_WIDTH ? 'Message...' : 'Message Odysseus...');
-	    }
-
-	    if (_isMobile && textarea && !textarea._odysseusPlanPlaceholderHint) {
-	      textarea._odysseusPlanPlaceholderHint = true;
-	      setInterval(() => {
-	        _placeholderHintOn = !_placeholderHintOn;
-	        setComposerPlaceholder(inputTop.clientWidth || window.innerWidth || 0);
-	      }, 5000);
 	    }
 
 		    function checkPickerOverflow() {
