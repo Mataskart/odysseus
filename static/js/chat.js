@@ -1534,16 +1534,29 @@ import { loadPanel } from './panels.js';
       firstTokenWaitTimers.forEach(t => { try { clearTimeout(t); } catch (_) {} });
       firstTokenWaitTimers = [];
     };
-    const scheduleFirstTokenWaitMessages = () => {
+    const scheduleFirstTokenWaitMessages = (phase = 'context') => {
       clearFirstTokenWaitTimers();
-      const steps = [
-        [20000, 'Still waiting for first token'],
-        [60000, 'Large local model is pre-filling context'],
-        [120000, 'Still working - no tokens yet from the model'],
-      ];
+      const isWaitingForModel = phase === 'model';
+      const steps = isWaitingForModel
+        ? [
+            [12000, 'Request prepared · waiting for model startup'],
+            [30000, 'Model is processing the prompt'],
+            [60000, 'Large prompt prefill can take a while'],
+            [90000, 'Still waiting for the model’s first token'],
+          ]
+        : [
+            [12000, 'Preparing conversation context'],
+            [30000, 'Still assembling the model request'],
+            [60000, 'Request preparation is taking longer than usual'],
+            [90000, 'Still preparing the request · checking context and tools'],
+          ];
       firstTokenWaitTimers = steps.map(([ms, text]) => setTimeout(() => {
         if (!accumulated && spinner && spinner.element && !(abortCtrl && abortCtrl.signal.aborted)) {
-          spinner.updateMessage(text);
+          const elapsedSeconds = Math.round(ms / 1000);
+          const elapsed = elapsedSeconds >= 60
+            ? `${Math.floor(elapsedSeconds / 60)}m ${elapsedSeconds % 60}s`
+            : `${elapsedSeconds}s`;
+          spinner.updateMessage(`${text} · ${elapsed}`);
         }
       }, ms));
     };
@@ -2047,14 +2060,13 @@ import { loadPanel } from './panels.js';
       
       // Update spinner message based on mode
       if (el('web-toggle').checked && !_isAgent) {
-        spinner.updateMessage('Web search enabled · preparing request');
+        spinner.updateMessage('Preparing request · web search enabled');
       } else if (el('research-toggle').checked) {
-        spinner.updateMessage('Researching');
-        setTimeout(() => spinner.updateMessage('Analyzing sources'), 1500);
+        spinner.updateMessage('Preparing research request');
       } else {
-        spinner.updateMessage('Processing request');
-        scheduleFirstTokenWaitMessages();
+        spinner.updateMessage('Preparing conversation context');
       }
+      scheduleFirstTokenWaitMessages('context');
       
       const researchBtn = el('research-toggle-btn');
       if (el('research-toggle').checked && researchBtn) {
@@ -2880,7 +2892,8 @@ import { loadPanel } from './panels.js';
               if (json.type === 'agent_prep') {
                 if (!_isBg) {
                   _cancelThinkingTimer();
-                  _replaceThinkingSpinner('Preparing agent');
+                  _replaceThinkingSpinner('Tool selection complete · waiting for model');
+                  scheduleFirstTokenWaitMessages('model');
                 }
                 continue;
               }
@@ -3243,6 +3256,10 @@ import { loadPanel } from './panels.js';
               } else if (json.type === 'model_info') {
                 // Update role label with model name as soon as we know it
                 if (!_isBg && holder) {
+                  if (!accumulated && spinner && spinner.element) {
+                    spinner.updateMessage('Request prepared · waiting for model');
+                    scheduleFirstTokenWaitMessages('model');
+                  }
                   const roleEl = holder.querySelector('.role');
                   if (roleEl) {
                     holder._requestedModel = json.requested_model || json.model || holder._requestedModel;
