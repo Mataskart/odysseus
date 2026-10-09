@@ -3183,6 +3183,8 @@ async def _stream_llm_inner(url: str, model: str, messages: List[Dict], temperat
                                     _c0 = (j["choices"] or [None])[0]
                                     if _c0 is None:
                                         continue
+                                    if _c0.get("finish_reason"):
+                                        yield f'data: {json.dumps({"type": "finish_reason", "value": _c0["finish_reason"]})}\n\n'
                                     delta = _c0.get("delta") or {}
                                     if isinstance(delta, dict):
                                         # Text content

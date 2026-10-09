@@ -57,6 +57,7 @@ def record_turn(
     response: str,
     tool_events,
     offered_tools,
+    rounds=None,
 ) -> None:
     if not logging_enabled():
         return
@@ -88,6 +89,14 @@ def record_turn(
         "messages": clipped_messages,
         "tool_events": clipped_events,
         "response": _clip(response),
+        "rounds": [
+            {
+                **round_record,
+                "assistant_content": _clip(round_record.get("assistant_content")),
+            }
+            for round_record in rounds or []
+            if isinstance(round_record, dict)
+        ],
     })
 
 

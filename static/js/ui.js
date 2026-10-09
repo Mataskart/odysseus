@@ -18,9 +18,9 @@ let hoveredDockChip = null;
 let _lastPointerClientX = null;
 let _lastPointerClientY = null;
 
-// Smooth scroll state
 let _scrollRafId = null;
 let _scrollBox = null;
+let _resumeAutoScrollAtBottom = false;
 
 function _isTextEditingTarget(target) {
   const el = target && target.nodeType === 1 ? target : target?.parentElement;
@@ -450,49 +450,19 @@ export function showError(msg) {
 }
 
 /**
- * Smooth-scroll chat history to bottom using rAF lerp.
- * Throttled during streaming so it doesn't fight user scrolling.
+ * Keep chat history pinned while the user has not scrolled away.
  */
-let _scrollThrottleTimer = null;
 export function scrollHistory() {
-  if (!autoScrollEnabled) return;
-  if (!_scrollBox) {
-    _scrollBox = document.getElementById('chat-history');
-  }
-  // Throttle: only start a new scroll animation every 500ms
-  if (_scrollThrottleTimer) return;
-  _scrollThrottleTimer = setTimeout(() => { _scrollThrottleTimer = null; }, 500);
-  if (!_scrollRafId) {
-    _scrollRafId = requestAnimationFrame(_smoothScrollStep);
-  }
-}
+  if (!autoScrollEnabled || _scrollRafId) return;
+  if (!_scrollBox) _scrollBox = document.getElementById('chat-history');
+  if (!_scrollBox) return;
 
-function _smoothScrollStep() {
-  const box = _scrollBox;
-  if (!box || !autoScrollEnabled) {
+  _scrollRafId = requestAnimationFrame(() => {
     _scrollRafId = null;
-    return;
-  }
-  const target = box.scrollHeight - box.clientHeight;
-  const current = box.scrollTop;
-  const diff = target - current;
-
-  // If user scrolled up significantly, don't force them down
-  if (diff > 300) {
-    _scrollRafId = null;
-    return;
-  }
-
-  if (diff <= 1) {
-    box.scrollTop = target;
-    _scrollRafId = null;
-    return;
-  }
-
-  // Lerp: gentle catch-up
-  const factor = window.innerWidth <= 768 ? 0.4 : 0.2;
-  box.scrollTop = current + diff * factor;
-  _scrollRafId = requestAnimationFrame(_smoothScrollStep);
+    if (autoScrollEnabled && _scrollBox) {
+      _scrollBox.scrollTop = _scrollBox.scrollHeight;
+    }
+  });
 }
 
 /**
@@ -815,7 +785,70 @@ export function isTouchInsideModal() {
 function _initScrollDismiss() {
   const chatHistory = document.getElementById('chat-history');
   if (chatHistory) {
+    const pauseAutoScroll = () => {
+      autoScrollEnabled = false;
+      _resumeAutoScrollAtBottom = false;
+      if (_scrollRafId !== null) cancelAnimationFrame(_scrollRafId);
+      _scrollRafId = null;
+    };
+    const resumeWhenAtBottom = () => {
+      _resumeAutoScrollAtBottom = true;
+      const distanceFromBottom = chatHistory.scrollHeight - chatHistory.clientHeight - chatHistory.scrollTop;
+      if (distanceFromBottom <= 80) {
+        autoScrollEnabled = true;
+        _resumeAutoScrollAtBottom = false;
+      }
+    };
+
+    chatHistory.addEventListener('wheel', (event) => {
+      if (event.deltaY < 0) pauseAutoScroll();
+      else if (event.deltaY > 0) resumeWhenAtBottom();
+    }, { passive: true });
+
+    let lastTouchY = null;
+    chatHistory.addEventListener('touchstart', (event) => {
+      lastTouchY = event.touches[0]?.clientY ?? null;
+    }, { passive: true });
+    chatHistory.addEventListener('touchmove', (event) => {
+      const touchY = event.touches[0]?.clientY;
+      if (lastTouchY === null || touchY === undefined) return;
+      if (touchY > lastTouchY + 4) pauseAutoScroll();
+      else if (touchY < lastTouchY - 4) resumeWhenAtBottom();
+      lastTouchY = touchY;
+    }, { passive: true });
+    chatHistory.addEventListener('touchend', () => { lastTouchY = null; }, { passive: true });
+    chatHistory.addEventListener('touchcancel', () => { lastTouchY = null; }, { passive: true });
+
+    chatHistory.addEventListener('keydown', (event) => {
+      if (['ArrowUp', 'PageUp', 'Home'].includes(event.key)) pauseAutoScroll();
+      else if (['ArrowDown', 'PageDown', 'End'].includes(event.key)) resumeWhenAtBottom();
+    });
+
+    let scrollbarDragPreviousTop = null;
+    chatHistory.addEventListener('pointerdown', (event) => {
+      const bounds = chatHistory.getBoundingClientRect();
+      const scrollbarWidth = chatHistory.offsetWidth - chatHistory.clientWidth;
+      const isScrollbarPress = scrollbarWidth > 0 && event.clientX >= bounds.right - scrollbarWidth;
+      if (isScrollbarPress) scrollbarDragPreviousTop = chatHistory.scrollTop;
+    });
+    document.addEventListener('pointermove', () => {
+      if (scrollbarDragPreviousTop === null) return;
+      const currentTop = chatHistory.scrollTop;
+      if (currentTop < scrollbarDragPreviousTop) pauseAutoScroll();
+      else if (currentTop > scrollbarDragPreviousTop) resumeWhenAtBottom();
+      scrollbarDragPreviousTop = currentTop;
+    }, { passive: true });
+    document.addEventListener('pointerup', () => { scrollbarDragPreviousTop = null; }, { passive: true });
+    document.addEventListener('pointercancel', () => { scrollbarDragPreviousTop = null; }, { passive: true });
+
     chatHistory.addEventListener('scroll', () => {
+      if (!autoScrollEnabled && _resumeAutoScrollAtBottom) {
+        const distanceFromBottom = chatHistory.scrollHeight - chatHistory.clientHeight - chatHistory.scrollTop;
+        if (distanceFromBottom <= 80) {
+          autoScrollEnabled = true;
+          _resumeAutoScrollAtBottom = false;
+        }
+      }
       chatHistory.querySelectorAll('.dropdown.show').forEach(d => d.classList.remove('show'));
       document.querySelectorAll('.ctx-popup').forEach(dismissOrRemove);
     }, { passive: true });
