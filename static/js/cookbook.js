@@ -31,6 +31,7 @@ import {
 import {
   initServe,
   _fetchCachedModels, _cachedAllModels, _filterCachedList, _rerenderCachedModels, _deleteCachedModel,
+  openServePanelForRepo,
 } from './cookbookServe.js';
 
 import { bindMenuDismiss, dismissOrRemove } from './escMenuStack.js';
@@ -3298,6 +3299,19 @@ let _rendered = false;
 
 let _closeGen = 0;
 
+function _captureExpandedServeDraft(modal) {
+  const panel = modal.querySelector('.hwfit-serve-panel');
+  if (!panel) return null;
+  const fields = {};
+  panel.querySelectorAll('[data-field]').forEach((field) => {
+    const key = field.dataset.field;
+    fields[key] = field.type === 'checkbox' ? field.checked : field.value;
+  });
+  const command = panel.querySelector('.hwfit-serve-cmd');
+  if (command?._cmdManuallyEdited) fields._manual_cmd = command.value;
+  return fields;
+}
+
 // ESC while a Serve card is expanded should collapse just that card, not
 // close the whole Cookbook modal. Capture-phase so we run before the
 // modal manager's global ESC-to-close handler and can stop it.
@@ -3333,19 +3347,25 @@ if (typeof window !== 'undefined' && !window._cookbookServeEscBound) {
 export async function open(opts) {
   const modal = document.getElementById('cookbook-modal');
   if (!modal) return;
+  const previousTab = modal.querySelector('.cookbook-tab.active')?.dataset.backend;
+  const expandedCard = modal.querySelector('.doclib-card-expanded[data-repo]');
+  const expandedRepo = expandedCard?.dataset.repo;
+  const serveDraft = expandedRepo ? _captureExpandedServeDraft(modal) : null;
   // Run any post-open intent (switch tab, prefill search, etc) after the
   // current render pass so the target elements exist.
-  const _applyIntent = () => {
-    if (!opts) return;
-    if (opts.tab) {
-      const t = modal.querySelector(`.cookbook-tab[data-backend="${opts.tab}"]`);
+  const _applyIntent = async () => {
+    const requestedTab = opts?.tab || previousTab || 'Search';
+    if (requestedTab === 'Serve' && expandedRepo) {
+      await openServePanelForRepo(expandedRepo, serveDraft);
+    } else {
+      const t = modal.querySelector(`.cookbook-tab[data-backend="${requestedTab}"]`);
       if (t && !t.classList.contains('active')) t.click();
     }
-    if (opts.usecase) {
+    if (opts?.usecase) {
       const u = document.getElementById('hwfit-usecase');
       if (u && u.value !== opts.usecase) { u.value = opts.usecase; u.dispatchEvent(new Event('change', { bubbles: true })); }
     }
-    if (opts.serveSearch) {
+    if (opts?.serveSearch) {
       const s = document.getElementById('serve-search');
       if (s) { s.value = opts.serveSearch; s.dispatchEvent(new Event('input', { bubbles: true })); }
     }
@@ -3359,7 +3379,7 @@ export async function open(opts) {
   }
   // If already visible, no-op (but still honour the intent)
   if (!modal.classList.contains('hidden')) {
-    setTimeout(_applyIntent, 0);
+    if (opts) setTimeout(_applyIntent, 0);
     return;
   }
   _setCookbookOpening(true);

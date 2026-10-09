@@ -3250,8 +3250,12 @@ function _rerenderCachedModels() {
         _cmdTextarea.style.height = 'auto';
         _cmdTextarea.style.height = _cmdTextarea.scrollHeight + 'px';
         _cmdManuallyEdited = true;
+        _cmdTextarea._cmdManuallyEdited = true;
       }
-      if (_cmdTextarea) _cmdTextarea.addEventListener('input', () => { _cmdManuallyEdited = true; });
+      if (_cmdTextarea) _cmdTextarea.addEventListener('input', () => {
+        _cmdManuallyEdited = true;
+        _cmdTextarea._cmdManuallyEdited = true;
+      });
 
       // Cancel button — collapses the serve config panel (same effect as
       // tapping the row to toggle it shut). Mobile users wanted an explicit
