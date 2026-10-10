@@ -2109,6 +2109,34 @@ export function displayMetrics(messageElement, metrics) {
     const prepDetails = prepBreakdown
       ? Object.entries(prepBreakdown).map(([k, v]) => `${k}: ${v}s`).join('<br>')
       : '';
+    const startupLabels = {
+      server_setup_before_context: 'Server setup before context',
+      context_build: 'Context assembly',
+      post_context_to_model_info: 'Route setup after context',
+      server_request_to_model_info: 'Server request to model info',
+      model_info_to_llm_request: 'Model info to model request',
+      model_info_to_agent_prep: 'Intent/tools/prompt preparation',
+      agent_prep_to_request_enqueue: 'Agent prep to model queue',
+      request_setup_to_llm_start: 'Agent request setup to model call',
+      local_model_slot_wait: 'Wait for local model slot',
+      request_to_upstream_headers: 'Model request to upstream response',
+      upstream_headers_to_first_token: 'Upstream response to first token',
+      llm_request_to_upstream_headers: 'Model request to upstream response',
+      server_request_to_first_token: 'Server request to first token',
+    };
+    const startupTimings = {
+      ...(metrics.startup_timings || {}),
+      ...(metrics.llm_startup_timings || {}),
+    };
+    const startupDetails = Object.entries(startupTimings)
+      .filter(([key, value]) => (
+        startupLabels[key]
+        && value !== null
+        && value !== undefined
+        && Number.isFinite(Number(value))
+      ))
+      .map(([key, value]) => `${startupLabels[key]}: ${Number(value).toFixed(3)}s`)
+      .join('<br>');
 
     // Session total cost
     let sessionCostStr = '';
@@ -2134,6 +2162,10 @@ export function displayMetrics(messageElement, metrics) {
       ${prepDetails ? `<div style="margin-top:6px;padding-top:6px;border-top:1px solid var(--border);font-size:0.85em;opacity:0.8;">
         <div style="font-weight:600;margin-bottom:4px;color:var(--fg);">Agent prep</div>
         ${prepDetails}
+      </div>` : ''}
+      ${startupDetails ? `<div style="margin-top:6px;padding-top:6px;border-top:1px solid var(--border);font-size:0.85em;opacity:0.8;">
+        <div style="font-weight:600;margin-bottom:4px;color:var(--fg);">First-token startup timings</div>
+        ${startupDetails}
       </div>` : ''}
       ${ctxPct !== undefined && ctxPct > 0 ? `<div style="margin-top:6px;padding-top:6px;border-top:1px solid var(--border);">
         <span class="ctx-label">Context</span> <span style="color:${ctxColor};font-weight:600;">${ctxPct}%</span> used

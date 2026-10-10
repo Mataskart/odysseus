@@ -961,6 +961,53 @@ def setup_chat_routes(
     # ------------------------------------------------------------------ #
     @router.post("/api/chat_stream")
     async def chat_stream(request: Request) -> StreamingResponse:
+        _request_received_at = time.perf_counter()
+        _startup_timing_marks = {
+            "request_received": _request_received_at,
+        }
+
+        def _startup_timings():
+            marks = _startup_timing_marks
+            timings = {}
+            if "context_started" in marks:
+                timings["server_setup_before_context"] = round(
+                    marks["context_started"] - marks["request_received"], 3
+                )
+            if "context_finished" in marks:
+                timings["context_build"] = round(
+                    marks["context_finished"] - marks["context_started"], 3
+                )
+            if "model_info_emitted" in marks:
+                timings["post_context_to_model_info"] = round(
+                    marks["model_info_emitted"] - marks["context_finished"], 3
+                )
+                timings["server_request_to_model_info"] = round(
+                    marks["model_info_emitted"] - marks["request_received"], 3
+                )
+            if "llm_request_started" in marks and "model_info_emitted" in marks:
+                timings["model_info_to_llm_request"] = round(
+                    marks["llm_request_started"] - marks["model_info_emitted"], 3
+                )
+            if "agent_prep_finished" in marks and "model_info_emitted" in marks:
+                timings["model_info_to_agent_prep"] = round(
+                    marks["agent_prep_finished"] - marks["model_info_emitted"], 3
+                )
+            if "local_model_slot_wait" in marks:
+                timings["local_model_slot_wait"] = round(marks["local_model_slot_wait"], 3)
+            if "upstream_headers_received" in marks and "llm_request_started" in marks:
+                timings["llm_request_to_upstream_headers"] = round(
+                    marks["upstream_headers_received"] - marks["llm_request_started"], 3
+                )
+            if "first_token_received" in marks and "upstream_headers_received" in marks:
+                timings["upstream_headers_to_first_token"] = round(
+                    marks["first_token_received"] - marks["upstream_headers_received"], 3
+                )
+            if "first_token_received" in marks:
+                timings["server_request_to_first_token"] = round(
+                    marks["first_token_received"] - marks["request_received"], 3
+                )
+            return timings
+
         require_api_token_scope(request, "chat")
         body = None
         try:
@@ -1354,6 +1401,7 @@ def setup_chat_routes(
         )
 
         # Build shared context (stream path uses enhanced_message for context preface)
+        _startup_timing_marks["context_started"] = time.perf_counter()
         ctx = await build_chat_context(
             sess, request, chat_handler, chat_processor,
             message=message,
@@ -1384,6 +1432,7 @@ def setup_chat_routes(
             ),
             persist_user_message=not tool_approval_continuation,
         )
+        _startup_timing_marks["context_finished"] = time.perf_counter()
 
         _research_flags = {"do": do_research}  # Mutable container for generator scope
 
@@ -1853,6 +1902,7 @@ def setup_chat_routes(
                 _model_info["suffix"] = _model_suffix
             if ctx.preset.character_name:
                 _model_info["character_name"] = ctx.preset.character_name
+            _startup_timing_marks["model_info_emitted"] = time.perf_counter()
             yield f'data: {json.dumps(_model_info)}\n\n'
 
             _terminal_saved = False
@@ -1956,6 +2006,19 @@ def setup_chat_routes(
                 return
             elif chat_mode == "chat":
                 _chat_start = time.time()
+
+                def _record_local_model_slot_wait(wait_seconds):
+                    _startup_timing_marks["local_model_slot_wait"] = wait_seconds
+
+                def _record_llm_request_start(started_at):
+                    _startup_timing_marks["llm_request_started"] = started_at
+
+                def _record_upstream_headers(received_at, _status_code, _request_started_at):
+                    prior_status = _startup_timing_marks.get("upstream_status")
+                    if prior_status is None or _status_code == 200:
+                        _startup_timing_marks["upstream_headers_received"] = received_at
+                        _startup_timing_marks["upstream_status"] = _status_code
+
                 _answered_by = None  # set if the selected model failed and a fallback answered
                 _requested_model = sess.model
                 _actual_model = None
@@ -1988,11 +2051,17 @@ def setup_chat_routes(
                         fallback_on_empty=_foreground_policy.fallback_on_empty,
                         candidate_request_factory=_chat_request_factory,
                         candidate_route_descriptors=_foreground_route_descriptors,
+                        on_local_model_slot_wait=_record_local_model_slot_wait,
+                        on_llm_request_start=_record_llm_request_start,
+                        on_upstream_headers=_record_upstream_headers,
                     ):
                         if chunk.startswith("data: ") and not chunk.startswith("data: [DONE]"):
                             try:
                                 data = json.loads(chunk[6:])
                                 if "delta" in data:
+                                    _startup_timing_marks.setdefault(
+                                        "first_token_received", time.perf_counter()
+                                    )
                                     if _commit_chat_compaction(_actual_candidate_index):
                                         _compacted_length = _chat_request_state["context_lengths"].get(
                                             _actual_candidate_index,
@@ -2099,6 +2168,7 @@ def setup_chat_routes(
                                         last_metrics["tps_source"] = "backend"
                                     # Wall-clock response time for the stats popup ("Time").
                                     last_metrics.setdefault("response_time", round(time.time() - _chat_start, 2))
+                                    last_metrics["startup_timings"] = _startup_timings()
                                     yield f'data: {json.dumps({"type": "metrics", "data": last_metrics})}\n\n'
                             except json.JSONDecodeError:
                                 yield chunk
@@ -2169,6 +2239,7 @@ def setup_chat_routes(
                                     "requested_endpoint_id": _requested_route.get("endpoint_id"),
                                     "requested_endpoint_label": _requested_route.get("endpoint_label"),
                                 })
+                                _terminal_metrics["startup_timings"] = _startup_timings()
                                 if isinstance(
                                     _actual_route.get("endpoint_cost_tracked"),
                                     bool,
@@ -2234,6 +2305,7 @@ def setup_chat_routes(
                                     "endpoint_id": _actual_route.get("endpoint_id"),
                                     "endpoint_label": _actual_route.get("endpoint_label"),
                                     "usage_source": "estimated",
+                                    "startup_timings": _startup_timings(),
                                 }
                                 if isinstance(
                                     _actual_route.get("endpoint_cost_tracked"),
@@ -2390,7 +2462,15 @@ def setup_chat_routes(
                         if chunk.startswith("data: ") and not chunk.startswith("data: [DONE]"):
                             try:
                                 data = json.loads(chunk[6:])
+                                if data.get("type") == "agent_prep":
+                                    _startup_timing_marks["agent_prep_finished"] = time.perf_counter()
+                                    data["startup_timings"] = _startup_timings()
+                                    yield f'data: {json.dumps(data)}\n\n'
+                                    continue
                                 if "delta" in data:
+                                    _startup_timing_marks.setdefault(
+                                        "first_token_received", time.perf_counter()
+                                    )
                                     # Reasoning tokens arrive flagged thinking:true.
                                     # Forward them for the live indicator, but keep
                                     # them out of the saved reply (same as chat mode).
@@ -2462,6 +2542,7 @@ def setup_chat_routes(
                                     yield f'data: {json.dumps(data)}\n\n'
                                 elif data.get("type") == "agent_terminal":
                                     terminal_metadata = dict(data.get("data") or {})
+                                    terminal_metadata["startup_timings"] = _startup_timings()
                                     last_metrics = terminal_metadata
                                     failure = terminal_metadata.get("failure") or {}
                                     failure_status = _normalize_http_status(
@@ -2503,6 +2584,10 @@ def setup_chat_routes(
                                     yield chunk
                                 elif data.get("type") == "metrics":
                                     last_metrics = data.get("data", {})
+                                    last_metrics["startup_timings"] = _startup_timings()
+                                    last_metrics["startup_timings"].update(
+                                        last_metrics.get("llm_startup_timings", {})
+                                    )
                                     _reported_model = last_metrics.get("model")
                                     last_metrics["requested_model"] = last_metrics.get("requested_model") or _requested_model
                                     last_metrics["model"] = _reported_model or _actual_model or _answered_by or _requested_model

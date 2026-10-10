@@ -3570,6 +3570,7 @@ async def stream_agent_loop(
     )
     mcp_mgr = get_mcp_manager()
     prep_timings: Dict[str, float] = {}
+    first_round_llm_timings: Dict[str, float] = {}
     disabled_tools = set(disabled_tools or [])
     route_descriptors = list(route_descriptors or [])
     while len(route_descriptors) < 1 + len(fallbacks or []):
@@ -4511,6 +4512,7 @@ async def stream_agent_loop(
         {k: round(v, 3) for k, v in prep_timings.items()},
     )
     yield f"data: {json.dumps({'type': 'agent_prep', 'data': {k: round(v, 3) for k, v in prep_timings.items()}})}\n\n"
+    agent_prep_finished_at = time.perf_counter()
 
     full_response = ""
     total_start = time.time()
@@ -5004,6 +5006,30 @@ async def stream_agent_loop(
         # so never trips the inactivity timeout. Generous — only catches runaway.
         _round_deadline = time.time() + max(agent_stream_timeout * 4, 1200)
         _round_start = time.time()
+        _round_start_perf = time.perf_counter()
+        if round_num == 1:
+            first_round_llm_timings["agent_prep_to_request_enqueue"] = round(
+                _round_start_perf - agent_prep_finished_at, 3
+            )
+
+        def _record_llm_request_start(started_at):
+            if round_num == 1:
+                first_round_llm_timings["request_setup_to_llm_start"] = round(
+                    started_at - _round_start_perf, 3
+                )
+
+        def _record_local_model_slot_wait(wait_seconds):
+            if round_num == 1:
+                first_round_llm_timings["local_model_slot_wait"] = round(wait_seconds, 3)
+
+        def _record_upstream_headers(received_at, status_code, request_started_at):
+            is_first_upstream_response = "upstream_status" not in first_round_llm_timings
+            is_successful_response = status_code == 200
+            if round_num == 1 and (is_first_upstream_response or is_successful_response):
+                first_round_llm_timings["request_to_upstream_headers"] = round(
+                    received_at - (request_started_at or _round_start_perf), 3
+                )
+                first_round_llm_timings["upstream_status"] = status_code
         _round_first_event_logged = False
         _round_first_token_logged = False
         round_finish_reason = None
@@ -5075,6 +5101,9 @@ async def stream_agent_loop(
             fallback_on_empty=fallback_on_empty,
             candidate_request_factory=_candidate_request,
             candidate_route_descriptors=_candidate_route_descriptors,
+            on_local_model_slot_wait=_record_local_model_slot_wait,
+            on_llm_request_start=_record_llm_request_start,
+            on_upstream_headers=_record_upstream_headers,
         ):
             if not _round_first_event_logged:
                 _round_first_event_logged = True
@@ -5307,6 +5336,17 @@ async def stream_agent_loop(
                         if not first_token_received:
                             time_to_first_token = time.time() - total_start
                             first_token_received = True
+                            if round_num == 1:
+                                first_round_llm_timings["upstream_headers_to_first_token"] = (
+                                    round(
+                                        time.perf_counter()
+                                        - _round_start_perf
+                                        - first_round_llm_timings.get("request_to_upstream_headers", 0),
+                                        3,
+                                    )
+                                    if "request_to_upstream_headers" in first_round_llm_timings
+                                    else None
+                                )
                         if not _round_first_token_logged:
                             _round_first_token_logged = True
                             logger.info(
@@ -6550,6 +6590,7 @@ async def stream_agent_loop(
         backend_gen_tps=backend_gen_tps,
         backend_prefill_tps=backend_prefill_tps,
     )
+    metrics["llm_startup_timings"] = first_round_llm_timings
     metrics["requested_model"] = requested_model
     metrics["endpoint_id"] = actual_endpoint_id
     metrics["endpoint_label"] = actual_endpoint_label

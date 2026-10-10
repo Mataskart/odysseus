@@ -2560,9 +2560,17 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
                      max_tokens: int = LLMConfig.DEFAULT_MAX_TOKENS, headers: Optional[Dict] = None,
                      timeout: int = LLMConfig.STREAM_TIMEOUT, prompt_type: Optional[str] = None,
                      tools: Optional[List[Dict]] = None, session_id: Optional[str] = None,
-                     tool_choice_none: bool = False, workload: str = "foreground"):
+                     tool_choice_none: bool = False, workload: str = "foreground",
+                     on_local_model_slot_wait=None, on_llm_request_start=None,
+                     on_upstream_headers=None):
     target_url = _stream_target_url(url)
+    slot_queued_at = time.perf_counter()
     async with _local_model_slot(target_url, model, workload):
+        if callable(on_local_model_slot_wait):
+            try:
+                on_local_model_slot_wait(time.perf_counter() - slot_queued_at)
+            except Exception:
+                logger.debug("Local model slot timing callback failed", exc_info=True)
         async for chunk in _stream_llm_inner(
             url,
             model,
@@ -2575,6 +2583,8 @@ async def stream_llm(url: str, model: str, messages: List[Dict], temperature: fl
             tools=tools,
             session_id=session_id,
             tool_choice_none=tool_choice_none,
+            on_llm_request_start=on_llm_request_start,
+            on_upstream_headers=on_upstream_headers,
         ):
             yield chunk
 
@@ -2583,7 +2593,8 @@ async def _stream_llm_inner(url: str, model: str, messages: List[Dict], temperat
                             max_tokens: int = LLMConfig.DEFAULT_MAX_TOKENS, headers: Optional[Dict] = None,
                             timeout: int = LLMConfig.STREAM_TIMEOUT, prompt_type: Optional[str] = None,
                             tools: Optional[List[Dict]] = None, session_id: Optional[str] = None,
-                            tool_choice_none: bool = False):
+                            tool_choice_none: bool = False, on_llm_request_start=None,
+                            on_upstream_headers=None):
     """Stream LLM responses with improved error handling.
 
     Yields SSE chunks:
@@ -2670,6 +2681,28 @@ async def _stream_llm_inner(url: str, model: str, messages: List[Dict], temperat
     # connect blip (offshore/public endpoints) surfacing as a 503 on this stream
     # path, which -- unlike llm_call -- does not retry the connect.
     stream_timeout = _stream_timeout(timeout)
+    request_started_at = None
+
+    def _mark_llm_request_start():
+        nonlocal request_started_at
+        request_started_at = time.perf_counter()
+        if callable(on_llm_request_start):
+            try:
+                on_llm_request_start(request_started_at)
+            except Exception:
+                logger.debug("LLM request timing callback failed", exc_info=True)
+
+    def _record_upstream_headers(response):
+        if not callable(on_upstream_headers):
+            return
+        try:
+            on_upstream_headers(
+                time.perf_counter(),
+                response.status_code,
+                request_started_at,
+            )
+        except Exception:
+            logger.debug("Upstream timing callback failed", exc_info=True)
 
     if _is_host_dead(target_url):
         yield f'event: error\ndata: {json.dumps({"error": f"Upstream {_host_key(target_url)} unreachable (cooldown active)", "status": 503})}\n\n'
@@ -2686,7 +2719,9 @@ async def _stream_llm_inner(url: str, model: str, messages: List[Dict], temperat
         _responses_model_announced = False
         try:
             client = _get_http_client()
+            _mark_llm_request_start()
             async with client.stream('POST', target_url, json=payload, headers=h, timeout=stream_timeout) as r:
+                _record_upstream_headers(r)
                 _clear_host_dead(target_url)
                 if r.status_code != 200:
                     raw = (await r.aread()).decode(errors="replace")
@@ -2807,7 +2842,9 @@ async def _stream_llm_inner(url: str, model: str, messages: List[Dict], temperat
         _ollama_model_announced = False
         try:
             client = _get_http_client()
+            _mark_llm_request_start()
             async with client.stream('POST', target_url, json=payload, headers=h, timeout=stream_timeout) as r:
+                _record_upstream_headers(r)
                 _clear_host_dead(target_url)
                 if r.status_code != 200:
                     raw = (await r.aread()).decode(errors="replace")
@@ -2906,7 +2943,9 @@ async def _stream_llm_inner(url: str, model: str, messages: List[Dict], temperat
         _anth_block_type = ""
         try:
             client = _get_http_client()
+            _mark_llm_request_start()
             async with client.stream('POST', target_url, json=payload, headers=h, timeout=stream_timeout) as r:
+                _record_upstream_headers(r)
                 _clear_host_dead(target_url)
                 if r.status_code != 200:
                     raw = (await r.aread()).decode(errors="replace")
@@ -3087,7 +3126,9 @@ async def _stream_llm_inner(url: str, model: str, messages: List[Dict], temperat
     try:
         client = _get_http_client()
         h = await apply_kimi_code_headers_async(client, h, target_url)
+        _mark_llm_request_start()
         async with client.stream('POST', target_url, json=payload, headers=h, timeout=stream_timeout) as r:
+            _record_upstream_headers(r)
             _clear_host_dead(target_url)
             if r.status_code != 200:
                 raw = (await r.aread()).decode(errors="replace")
