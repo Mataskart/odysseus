@@ -3647,3 +3647,81 @@ def test_skill_activation_reaches_later_fallback_request_and_pinned_round(monkey
         for message in round_three_requests[0]["messages"]
     )
     assert any('"delta": "pinned backup answer"' in chunk for chunk in chunks)
+
+
+def _raise_budget(*args, **kwargs):
+    from src.context_compactor import ContextBudgetError
+    raise ContextBudgetError("protected context does not fit")
+
+
+def test_agent_oversized_context_without_fallback_reports_error(monkeypatch):
+    import src.context_compactor as compactor
+
+    monkeypatch.setattr(agent_loop, "get_setting", lambda key, default=None: default)
+    monkeypatch.setattr(agent_loop, "get_mcp_manager", lambda: None)
+    monkeypatch.setattr(agent_loop, "estimate_tokens", lambda *args, **kwargs: 10)
+    monkeypatch.setattr(agent_loop, "blocked_tools_for_owner", lambda owner: set())
+    monkeypatch.setattr(compactor, "trim_for_context", _raise_budget)
+
+    async def fake_stream(candidates, messages, **kwargs):
+        raise AssertionError("an oversized request must not be sent")
+        yield
+
+    monkeypatch.setattr(agent_loop, "stream_llm_with_fallback", fake_stream)
+
+    chunks = _collect(agent_loop.stream_agent_loop(
+        "https://selected.example/v1",
+        "selected-model",
+        [{"role": "user", "content": "Investigate this."}],
+        relevant_tools={"bash"},
+        max_rounds=1,
+        _is_teacher_run=True,
+    ))
+
+    assert any("event: error" in chunk and "does not fit" in chunk for chunk in chunks)
+
+
+def test_agent_oversized_context_defers_to_fallback_candidates(monkeypatch):
+    import src.context_compactor as compactor
+
+    primary = ("https://selected.example/v1", "selected-model", {})
+    backup = ("https://backup.example/v1", "backup-model", {})
+    monkeypatch.setattr(agent_loop, "get_setting", lambda key, default=None: default)
+    monkeypatch.setattr(agent_loop, "get_mcp_manager", lambda: None)
+    monkeypatch.setattr(agent_loop, "estimate_tokens", lambda *args, **kwargs: 10)
+    monkeypatch.setattr(agent_loop, "blocked_tools_for_owner", lambda owner: set())
+    real_trim = compactor.trim_for_context
+    trim_calls = []
+
+    def trim(messages, budget, **kwargs):
+        trim_calls.append(budget)
+        if len(trim_calls) == 1:
+            _raise_budget()
+        return real_trim(messages, budget, **kwargs)
+
+    monkeypatch.setattr(compactor, "trim_for_context", trim)
+
+    async def fake_stream(candidates, messages, **kwargs):
+        assert candidates == [primary, backup]
+        request = await kwargs["candidate_request_factory"](1, *backup)
+        assert request["messages"]
+        yield 'data: {"delta": "backup answer"}\n\n'
+        yield "data: [DONE]\n\n"
+
+    monkeypatch.setattr(agent_loop, "stream_llm_with_fallback", fake_stream)
+
+    chunks = _collect(agent_loop.stream_agent_loop(
+        primary[0],
+        primary[1],
+        [{"role": "user", "content": "Investigate this."}],
+        headers=primary[2],
+        relevant_tools={"bash"},
+        fallbacks=[backup],
+        max_rounds=1,
+        fallback_statuses=FOREGROUND_AVAILABILITY_STATUSES,
+        fallback_on_empty=False,
+        _is_teacher_run=True,
+    ))
+
+    assert any("backup answer" in chunk for chunk in chunks)
+    assert not any("event: error" in chunk for chunk in chunks)

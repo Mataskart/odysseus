@@ -18,6 +18,10 @@ from core.models import ChatMessage
 logger = logging.getLogger(__name__)
 
 
+class ContextBudgetError(ValueError):
+    """Required context cannot fit without discarding protected messages."""
+
+
 def _content_as_text(content: Any) -> str:
     """Flatten a message's content to plain text.
 
@@ -132,28 +136,22 @@ def _message_text_token_estimate(text: str) -> int:
 
 
 def _truncate_text_to_token_budget(text: str, token_budget: int) -> str:
-    """Trim a too-large current user message instead of dropping it entirely."""
-    if token_budget <= 32:
-        return "[Current user message omitted: it exceeded the model context window.]"
-
     if not isinstance(text, str):
-        # This helper is typed/used as text downstream, so return an empty
-        # string rather than the raw non-string (which would move the crash
-        # into the caller that concatenates/measures the result).
         return ""
-    # Match src.model_context.estimate_tokens' rough chars * 0.3 estimate.
-    max_chars = max(200, int((token_budget - 16) / 0.3))
+    max_chars = max(0, int((token_budget - 4) / 0.3))
     if len(text) <= max_chars:
         return text
-
     notice = (
         "\n\n[Notice: the pasted message was too large for this model's context "
-        "window, so Odysseus kept the beginning and end.]"
+        "window, so Odysseus kept the beginning and end.]\n\n"
     )
-    keep_chars = max(200, max_chars - len(notice))
-    head_len = max(100, int(keep_chars * 0.7))
-    tail_len = max(80, keep_chars - head_len)
-    return text[:head_len].rstrip() + notice + "\n\n" + text[-tail_len:].lstrip()
+    if max_chars <= len(notice):
+        return "[Content truncated for context]"[:max_chars]
+    keep_chars = max_chars - len(notice)
+    head_len = int(keep_chars * 0.7)
+    tail_len = keep_chars - head_len
+    tail = text[-tail_len:] if tail_len else ""
+    return text[:head_len] + notice + tail
 
 
 def _truncate_tool_call_args(msg: Dict[str, Any], token_budget: int) -> Dict[str, Any]:
@@ -198,27 +196,24 @@ def _truncate_tool_call_args(msg: Dict[str, Any], token_budget: int) -> Dict[str
 
 def _truncate_message_to_token_budget(msg: Dict[str, Any], token_budget: int) -> Dict[str, Any]:
     """Return a copy of msg whose text content (and tool-call args) fit token_budget."""
-    out = dict(msg)
+    out = dict(_truncate_tool_call_args(msg, token_budget))
+    tool_overhead = estimate_tokens([{**out, "content": None}])
+    content_budget = max(4, token_budget - tool_overhead + 4)
     content = out.get("content", "")
     if isinstance(content, str):
-        out["content"] = _truncate_text_to_token_budget(content, token_budget)
+        out["content"] = _truncate_text_to_token_budget(content, content_budget)
     elif isinstance(content, list):
-        remaining = token_budget
+        remaining = content_budget
         new_content = []
         for item in content:
             if not isinstance(item, dict) or item.get("type") != "text":
                 new_content.append(item)
                 continue
-            text = item.get("text", "")
-            truncated = _truncate_text_to_token_budget(text, remaining)
-            cloned = dict(item)
-            cloned["text"] = truncated
-            new_content.append(cloned)
-            remaining -= _message_text_token_estimate(truncated)
+            truncated = _truncate_text_to_token_budget(item.get("text", ""), remaining)
+            new_content.append({**item, "text": truncated})
+            remaining -= int(len(truncated) * 0.3)
         out["content"] = new_content
-    # A tool-only turn (content=None) carries its payload in tool_calls args,
-    # which the branches above can't shrink — handle it so the message can fit.
-    return _truncate_tool_call_args(out, token_budget)
+    return out
 
 
 def trim_for_context(messages: List[Dict], context_length: int, reserve_tokens: int = 512) -> List[Dict]:
@@ -289,33 +284,61 @@ def trim_for_context(messages: List[Dict], context_length: int, reserve_tokens: 
             if estimate_tokens(trimmed) <= budget:
                 return _sanitize_tool_messages(essential_system + protected_msgs + convo_msgs)
 
-    # Still too big — drop older conversation turns BUT always keep the current
-    # user turn. If a pasted message alone exceeds the model context, truncate
-    # that message with a visible notice instead of dropping it; otherwise the
-    # model appears to "ignore" large pastes because it never receives them.
-    # Hermes-style: recent context matters more than old context.
-    PROTECT_RECENT = 10
-    current_msg = convo_msgs[-1:] if convo_msgs else []
-    prior_convo = convo_msgs[:-1] if convo_msgs else []
-    if len(prior_convo) >= PROTECT_RECENT:
-        old_msgs = prior_convo[:-(PROTECT_RECENT - 1)]
-        recent_msgs = prior_convo[-(PROTECT_RECENT - 1):] + current_msg
-        while old_msgs and estimate_tokens(essential_system + old_msgs + recent_msgs) > budget:
-            old_msgs.pop(0)
-        convo_msgs = old_msgs + recent_msgs
-    else:
-        convo_msgs = prior_convo + current_msg
-        while prior_convo and estimate_tokens(essential_system + prior_convo + current_msg) > budget:
-            prior_convo.pop(0)
-        convo_msgs = prior_convo + current_msg
+    # A user turn can span many assistant/tool rounds; its last message is often a tool result.
+    latest_user = next(
+        (msg for msg in reversed(convo_msgs) if msg.get("role") == "user"),
+        None,
+    )
+    groups = []
+    for msg in convo_msgs:
+        if msg.get("role") == "tool" and groups and groups[-1][0].get("tool_calls"):
+            groups[-1].append(msg)
+        else:
+            groups.append([msg])
 
-    # If the current message itself is too large, shrink only that message.
-    if current_msg and estimate_tokens(essential_system + protected_msgs + convo_msgs) > budget:
-        prefix = essential_system + protected_msgs + convo_msgs[:-1]
-        available_for_current = max(64, budget - estimate_tokens(prefix))
-        convo_msgs[-1] = _truncate_message_to_token_budget(convo_msgs[-1], available_for_current)
+    while len(groups) > 1:
+        convo_msgs = [msg for group in groups for msg in group]
+        if estimate_tokens(essential_system + convo_msgs) <= budget:
+            break
+        removable = next(
+            (index for index, group in enumerate(groups[:-1])
+             if not any(msg is latest_user for msg in group)),
+            None,
+        )
+        if removable is None:
+            break
+        groups.pop(removable)
 
+    convo_msgs = [msg for group in groups for msg in group]
     result = _sanitize_tool_messages(essential_system + protected_msgs + convo_msgs)
+    full_budget = context_length - reserve_tokens
+    fixed_messages = protected_msgs + _primers
+    while estimate_tokens(result) > full_budget:
+        overflow = estimate_tokens(result) - full_budget
+        candidates = [
+            (index, msg) for index, msg in enumerate(result)
+            if not any(msg is fixed for fixed in fixed_messages)
+        ]
+        # Shrink tool output and prior assistant text before the actual request or persona.
+        candidates.sort(key=lambda item: (
+            item[1] is latest_user or item[1].get("role") == "system",
+            -estimate_tokens([item[1]]),
+        ))
+        for index, msg in candidates:
+            size = estimate_tokens([msg])
+            smaller = _truncate_message_to_token_budget(msg, max(4, size - overflow))
+            if estimate_tokens([smaller]) < size:
+                result[index] = smaller
+                if msg is latest_user:
+                    latest_user = smaller
+                break
+        else:
+            raise ContextBudgetError(
+                "Required user, system, or tool context exceeds the model input budget "
+                f"({estimate_tokens(result)} > {full_budget} estimated tokens). "
+                "Reduce protected context or increase the model context window."
+            )
+
     logger.info(f"Trimmed to {estimate_tokens(result)} tokens ({len(result)} messages)")
     return result
 
@@ -358,8 +381,16 @@ async def maybe_compact(
     if len(convo_msgs) < 4:
         return messages, context_length, False
 
-    # Split conversation: summarize older half, keep recent half
-    split_point = len(convo_msgs) // 2
+    # Summarize complete prior turns without cutting through a tool exchange.
+    midpoint = len(convo_msgs) // 2
+    user_boundaries = [
+        index for index, msg in enumerate(convo_msgs)
+        if index > 0 and msg.get("role") == "user"
+    ]
+    if not user_boundaries:
+        return messages, context_length, False
+    preceding_boundaries = [index for index in user_boundaries if index <= midpoint]
+    split_point = preceding_boundaries[-1] if preceding_boundaries else user_boundaries[0]
     older = convo_msgs[:split_point]
     recent = convo_msgs[split_point:]
 

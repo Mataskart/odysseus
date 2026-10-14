@@ -25,6 +25,7 @@ from src.llm_core import (
 )
 from src.model_context import estimate_tokens
 from src.context_compactor import (
+    ContextBudgetError,
     apply_compaction_state,
     apply_compaction_state_for_session,
     maybe_compact,
@@ -4344,8 +4345,9 @@ async def stream_agent_loop(
             # protection metadata is only needed during trimming.
             return [{k: v for k, v in message.items() if k != "_protected"} for message in items]
 
+        from src.context_compactor import ContextBudgetError, trim_for_context
+
         try:
-            from src.context_compactor import trim_for_context
             from src.context_budget import (
                 compute_input_token_budget,
                 DEFAULT_BUDGET,
@@ -4398,6 +4400,8 @@ async def stream_agent_loop(
                     reserve_tokens,
                 )
             return _without_protection(trimmed_messages)
+        except ContextBudgetError:
+            raise
         except Exception as e:
             logger.warning(
                 "[agent] Soft context trim skipped for route model=%s: %s",
@@ -4511,19 +4515,37 @@ async def stream_agent_loop(
     prep_timings["prompt_build"] = time.time() - _t2
 
     _t3 = time.time()
-    _initial_route_request_messages = _trim_route_request_messages(
-        endpoint_url,
-        model,
-        messages,
-    )
+    try:
+        _initial_route_request_messages = _trim_route_request_messages(
+            endpoint_url,
+            model,
+            messages,
+        )
+    except ContextBudgetError as budget_error:
+        if not fallbacks:
+            logger.warning("[agent] required context does not fit model=%s: %s", model, budget_error)
+            yield (
+                "event: error\n"
+                f"data: {json.dumps({'error': str(budget_error), 'status': 413, 'fallback_eligible': False})}\n\n"
+            )
+            return
+        # The per-candidate request factory trims again and turns this into a
+        # fallback-eligible failure, so a larger fallback model can still answer.
+        logger.info("[agent] context does not fit primary model=%s; deferring to fallbacks", model)
+        _initial_route_request_messages = None
     _initial_route_context_length = _route_context_lengths.get(
         (endpoint_url, model),
         context_length,
     )
     prep_timings["context_trim"] = time.time() - _t3
 
-    run_security.observe_messages(_initial_route_request_messages)
-    agent_prompt_tokens = estimate_tokens(_initial_route_request_messages)
+    _initial_observed_messages = (
+        _initial_route_request_messages
+        if _initial_route_request_messages is not None
+        else [{k: v for k, v in message.items() if k != "_protected"} for message in messages]
+    )
+    run_security.observe_messages(_initial_observed_messages)
+    agent_prompt_tokens = estimate_tokens(_initial_observed_messages)
     logger.info(
         "[agent-timing] prep_done model=%s prompt_tokens=%s context_length=%s prep=%s",
         model,
@@ -4567,7 +4589,7 @@ async def stream_agent_loop(
     _ody_notes_tool_completed = False
     _pinned_fallback_candidate = None
     _pinned_fallback_route = None
-    _last_route_request_messages = _initial_route_request_messages
+    _last_route_request_messages = _initial_observed_messages
     _last_route_context_length = _initial_route_context_length
 
     # Loop-breaker state. Small models (e.g. deepseek-v4-flash) can get
