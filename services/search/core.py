@@ -115,6 +115,10 @@ def _call_provider(provider_name: str, query: str, count: int, time_filter: str 
 # installs. Users can override/disable with `search_fallback_chain`.
 _FALLBACK_ORDER = ["duckduckgo"]
 
+# Self-hosted SearXNG engines time out intermittently, so an empty answer is
+# worth one retry there. Keyed APIs answer the same again and bill for it.
+_RETRY_EMPTY_PROVIDERS = frozenset({"searxng"})
+
 
 def _build_provider_chain(primary: str) -> List[str]:
     """Build ordered list: primary first, then configured/default fallbacks."""
@@ -182,7 +186,12 @@ def searxng_search_results(query: str, count: int = 10, time_filter: str = None)
                 if results:
                     logger.info(f"{provider_name} search succeeded with {len(results)} results")
                     break
-            except (NetworkError, ParseError, RateLimitError) as e:
+                if provider_name not in _RETRY_EMPTY_PROVIDERS:
+                    break
+            except RateLimitError as e:
+                error_logger.error(f"{provider_name} rate limited: {e}")
+                break
+            except (NetworkError, ParseError) as e:
                 error_logger.error(f"{provider_name} search error (attempt {attempt + 1}): {e}")
             except Exception as e:
                 error_logger.error(f"Unexpected error during {provider_name} search (attempt {attempt + 1}): {e}")
@@ -291,6 +300,12 @@ def comprehensive_web_search(
                     logger.info(f"Comprehensive search: {provider_name} returned {len(search_results)} results")
                     break
                 empty = True
+                if provider_name not in _RETRY_EMPTY_PROVIDERS:
+                    break
+            except RateLimitError as e:
+                last_err = e
+                logger.warning(f"Comprehensive search: {provider_name} rate limited: {e}")
+                break
             except Exception as e:
                 last_err = e
                 logger.warning(f"Comprehensive search: {provider_name} attempt {attempt + 1} failed: {e}")

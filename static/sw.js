@@ -7,7 +7,7 @@
 //   - Other static assets (images/fonts/libs): cache-first with bg refresh.
 //   - API / non-GET: never cached.
 // Bump CACHE_NAME whenever the precache list or SW logic changes.
-const CACHE_NAME = 'odysseus-v382-rag-toolbar';
+const CACHE_NAME = 'odysseus-v383-revalidate-static';
 
 // KaTeX resolves these from its own stylesheet, so caching the CSS without them
 // gives offline math fallback glyphs instead of proper typesetting.
@@ -211,7 +211,7 @@ self.addEventListener('fetch', (e) => {
   // on a normal reload; fall back to cache only when offline.
   if (url.pathname.startsWith('/static/') && /\.(js|css)(\?|$)/.test(url.pathname + url.search)) {
     e.respondWith(
-      fetch(e.request, { cache: 'reload' }).then(res => {
+      fetch(e.request, { cache: 'no-cache' }).then(res => {
         if (res && res.ok) {
           const copy = res.clone();
           caches.open(CACHE_NAME).then(cache => cache.put(e.request, copy));

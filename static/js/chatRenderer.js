@@ -2119,7 +2119,7 @@ export function displayMetrics(messageElement, metrics) {
       agent_prep_to_request_enqueue: 'Agent prep to model queue',
       request_setup_to_llm_start: 'Agent request setup to model call',
       local_model_slot_wait: 'Wait for local model slot',
-      request_to_upstream_headers: 'Model request to upstream response',
+      request_to_upstream_headers: 'Agent model request to upstream response',
       upstream_headers_to_first_token: 'Upstream response to first token',
       llm_request_to_upstream_headers: 'Model request to upstream response',
       server_request_to_first_token: 'Server request to first token',

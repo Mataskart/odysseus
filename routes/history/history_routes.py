@@ -856,10 +856,10 @@ def setup_history_routes(session_manager, upload_handler=None) -> APIRouter:
         if not isinstance(body, dict):
             body = {}
         from src.turn_log import record_flag
-        record_flag(
+        recorded = record_flag(
             session_id=str(body.get("session_id") or ""),
             message_id=str(body.get("message_id") or ""),
         )
-        return {"ok": True}
+        return {"ok": True, "recorded": recorded}
 
     return router

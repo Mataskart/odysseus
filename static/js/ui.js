@@ -21,6 +21,8 @@ let _lastPointerClientY = null;
 let _scrollRafId = null;
 let _scrollBox = null;
 let _resumeAutoScrollAtBottom = false;
+// Where the last auto-scroll left the view; a scroll above it came from the user.
+let _lastAutoScrollTop = null;
 
 function _isTextEditingTarget(target) {
   const el = target && target.nodeType === 1 ? target : target?.parentElement;
@@ -461,6 +463,7 @@ export function scrollHistory() {
     _scrollRafId = null;
     if (autoScrollEnabled && _scrollBox) {
       _scrollBox.scrollTop = _scrollBox.scrollHeight;
+      _lastAutoScrollTop = _scrollBox.scrollTop;
     }
   });
 }
@@ -483,6 +486,7 @@ export function scrollHistoryInstant() {
  */
 export function setAutoScroll(enabled) {
   autoScrollEnabled = enabled;
+  _lastAutoScrollTop = null;
 }
 
 /**
@@ -842,6 +846,20 @@ function _initScrollDismiss() {
     document.addEventListener('pointercancel', () => { scrollbarDragPreviousTop = null; }, { passive: true });
 
     chatHistory.addEventListener('scroll', () => {
+      // Catch scroll-ups the input listeners miss: overlay scrollbars, find in
+      // page, jump-to-message links.
+      const bottomGap = chatHistory.scrollHeight - chatHistory.clientHeight - chatHistory.scrollTop;
+      if (bottomGap <= 80) {
+        // At the bottom (or the history was just replaced): new baseline.
+        _lastAutoScrollTop = chatHistory.scrollTop;
+      } else if (
+        autoScrollEnabled
+        && _lastAutoScrollTop !== null
+        && chatHistory.scrollTop < _lastAutoScrollTop - 40
+      ) {
+        pauseAutoScroll();
+        _resumeAutoScrollAtBottom = true;
+      }
       if (!autoScrollEnabled && _resumeAutoScrollAtBottom) {
         const distanceFromBottom = chatHistory.scrollHeight - chatHistory.clientHeight - chatHistory.scrollTop;
         if (distanceFromBottom <= 80) {

@@ -27,3 +27,12 @@ def test_local_tool_stall_requires_stop_narration_and_offered_tools():
     assert not _is_local_tool_stall("Let me check VRAM now.", "stop", 0, [])
     assert not _is_local_tool_stall("Let me check VRAM now.", "stop", 2, [{"id": "c1"}])
     assert not _is_local_tool_stall("The GPU uses 4 GB.", "stop", 2, [])
+
+
+def test_closing_remarks_and_completed_work_are_not_stalls():
+    assert not _is_local_tool_stall("Your GPU is at 45C. I'll keep an eye on it.", "stop", 2, [])
+    assert not _is_local_tool_stall("Done. I've saved the note. I will remind you tomorrow.", "stop", 2, [])
+    assert not _is_local_tool_stall("Let me check the logs. They show no errors since noon.", "stop", 2, [])
+    assert _sanitize_local_tool_history([
+        {"role": "assistant", "content": "Sure, I'll remember that."},
+    ]) == [{"role": "assistant", "content": "Sure, I'll remember that."}]

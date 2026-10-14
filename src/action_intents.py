@@ -134,6 +134,8 @@ _ROUTING_PATTERNS: tuple[tuple[str, str, Pattern[str]], ...] = tuple(
         ("shell", "imperative shell command request", rf"{_PLEASE}(deploy|build|install|restart|reboot|kill|tail|grep|cat|ls|cd|cp|mv|rm)\b\s+\S+"),
         ("shell", "assistant shell command request", rf"{_ACTION_QUESTION}(deploy|build|install|restart|reboot|kill|tail|grep|cat|ls|cd|cp|mv|rm)\b\s+\S+"),
         ("shell", "system/file check request", r"\b(check|see)\s+(if|whether|what)\s+.{1,40}\b(running|process|service|port|file|exists?)\b"),
+        ("shell", "live system count question", r"\bhow\s+many\s+(?:processes|threads|connections|containers|cores|gpus?|open\s+ports?)\b"),
+        ("web", "trailing web search request", r"\b(?:search\s+the\s+web|search\s+online|look\s+it\s+up(?:\s+online)?|google\s+it)\b\s*[.!?]*\s*$"),
     )
 )
 

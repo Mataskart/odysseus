@@ -2,10 +2,12 @@
 import logging
 import math
 import re
+import threading
 import time
 from collections import Counter
 from typing import List, Dict, Any, Optional, Tuple
 from src.chat_helpers import extract_urls
+from src.text_helpers import strip_think
 from src.youtube_handler import is_youtube_url
 from src.search import comprehensive_web_search, fetch_webpage_content
 from src.prompt_security import (
@@ -84,12 +86,43 @@ def _content_tokens(text: str) -> list:
     return [w for w in words if len(w) >= 3 and w not in _STOPWORDS]
 
 
+_QUERY_CONTEXT_CHARS = 500
+
+
+def _search_query_request(message: str, session: Any) -> str:
+    """The message plus the previous exchange, so follow-ups yield standalone queries."""
+    history = [
+        m for m in (getattr(session, "history", None) or [])
+        if isinstance(m, dict) and m.get("role") in {"user", "assistant"} and isinstance(m.get("content"), str)
+    ]
+    if history and history[-1].get("role") == "user" and history[-1]["content"].strip() == message.strip():
+        history = history[:-1]
+    earlier = []
+    for m in history[-2:]:
+        text = strip_think(m["content"]).strip()
+        if text:
+            earlier.append(f"{m['role']}: {text[:_QUERY_CONTEXT_CHARS]}")
+    if not earlier:
+        return message
+    return "Earlier conversation:\n" + "\n".join(earlier) + "\n\nCurrent message:\n" + message
+
+
 class ChatProcessor:
     def __init__(self, memory_manager, personal_docs_manager, memory_vector=None, skills_manager=None):
         self.memory_manager = memory_manager
         self.personal_docs_manager = personal_docs_manager
         self.memory_vector = memory_vector
         self.skills_manager = skills_manager
+        self._thread_state = threading.local()
+
+    @property
+    def _last_used_memories(self) -> list:
+        """Memories injected by this thread's latest preface; per thread so concurrent chats don't mix."""
+        return getattr(self._thread_state, "used_memories", [])
+
+    @_last_used_memories.setter
+    def _last_used_memories(self, value: list) -> None:
+        self._thread_state.used_memories = value
 
     # Minimum similarity score for RAG results to be injected
     RAG_SIMILARITY_THRESHOLD = 0.35
@@ -421,17 +454,22 @@ class ChatProcessor:
                                 "role": "system",
                                 "content": (
                                     "Extract a concise search query from the user's message. "
+                                    "Use the earlier conversation only to resolve references "
+                                    "such as \"it\" or \"that place\". "
+                                    f"Today is {time.strftime('%Y-%m-%d')}. "
                                     "Reply ONLY with the query."
                                 ),
                             },
-                            {"role": "user", "content": message},
+                            {"role": "user", "content": _search_query_request(message, session)},
                         ],
                         headers=t_headers,
                         temperature=0.1,
                         max_tokens=50,
                         timeout=15,
                         thinking=False,
-                    ).strip()
+                    )
+                    # Some servers ignore the thinking switch and inline <think> blocks.
+                    generated_query = strip_think(generated_query).strip()
 
                     if generated_query:
                         # LLM successfully generated a non-empty query -> use the generated query

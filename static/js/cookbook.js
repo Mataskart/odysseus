@@ -3299,8 +3299,8 @@ let _rendered = false;
 
 let _closeGen = 0;
 
-function _captureExpandedServeDraft(modal) {
-  const panel = modal.querySelector('.hwfit-serve-panel');
+function _captureExpandedServeDraft(card) {
+  const panel = card.querySelector('.hwfit-serve-panel');
   if (!panel) return null;
   const fields = {};
   panel.querySelectorAll('[data-field]').forEach((field) => {
@@ -3350,13 +3350,13 @@ export async function open(opts) {
   const previousTab = modal.querySelector('.cookbook-tab.active')?.dataset.backend;
   const expandedCard = modal.querySelector('.doclib-card-expanded[data-repo]');
   const expandedRepo = expandedCard?.dataset.repo;
-  const serveDraft = expandedRepo ? _captureExpandedServeDraft(modal) : null;
+  const serveDraft = expandedRepo ? _captureExpandedServeDraft(expandedCard) : null;
   // Run any post-open intent (switch tab, prefill search, etc) after the
   // current render pass so the target elements exist.
   const _applyIntent = async () => {
     const requestedTab = opts?.tab || previousTab || 'Search';
     if (requestedTab === 'Serve' && expandedRepo) {
-      await openServePanelForRepo(expandedRepo, serveDraft);
+      await openServePanelForRepo(expandedRepo, serveDraft, { draft: true });
     } else {
       const t = modal.querySelector(`.cookbook-tab[data-backend="${requestedTab}"]`);
       if (t && !t.classList.contains('active')) t.click();

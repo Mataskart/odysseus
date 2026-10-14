@@ -17,7 +17,7 @@ import pytest
 def app_module(monkeypatch):
     """Import app.py with AUTH_ENABLED=true and minimal mocked deps.
 
-    Sets up a real AuthManager user ('admin') so normalize_known_username
+    Gives AuthManager an in-memory 'admin' user so normalize_known_username
     resolves the token owner.  Replaces SessionLocal with a MagicMock so
     _refresh_token_cache() can run without a real DB.
     """
@@ -31,7 +31,9 @@ def app_module(monkeypatch):
 
     app_mod.SessionLocal = MagicMock()
     app_mod.logger = MagicMock()
-    app_mod.auth_manager.setup("admin", "TestPass123!")
+    # An in-memory user map: setup() would write the real auth store and is a
+    # no-op when that store already has accounts.
+    monkeypatch.setattr(app_mod.auth_manager, "_config", {"users": {"admin": {"is_admin": True}}})
 
     return app_mod
 

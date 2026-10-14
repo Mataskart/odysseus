@@ -1493,8 +1493,13 @@ def _classify_agent_request(messages: List[Dict], last_user: str) -> Dict[str, o
         domains.add("sessions")
     if has(r"\b(file|folder|directory|repo|git|grep|find in files|read file|edit file|shell|terminal|bash)\b"):
         domains.add("files")
-    if has(r"\b(run|execute|command|commands|cli|nvidia-smi|systemctl|journalctl|pacman|paru|yay|flatpak|install|uninstall|"
-           r"process|processes|pid|kill|service|services|daemon|cpu|gpu|vram|disk|disks|uptime|ps|htop|df|du|ports?|sudo|packages?)\b"):
+    # Tool names and system nouns alone mean shell work; generic verbs like
+    # "install" or "run" only count next to something a shell acts on, so
+    # "write a document on how to install Arch" stays a document turn.
+    if has(r"\b(cli|nvidia-smi|systemctl|journalctl|pacman|paru|yay|flatpak|pid|daemon|cpu|gpu|vram|disks?|uptime|"
+           r"htop|df|du|ports?|sudo)\b",
+           r"\b(run|execute|install|uninstall|kill|restart|start|stop)\b.{0,30}\b(command|commands|packages?|services?|"
+           r"process|processes|script|server|container|daemon)\b"):
         domains.add("files")
     if has(
         r"\b(run|execute|test|debug|fix|save|create|edit|read|open)\b.{0,40}\b("
@@ -2262,14 +2267,21 @@ def _is_odysseus_qwen_model(model: str) -> bool:
     return (model or "").lower().startswith("odysseus-qwen3")
 
 
+# The reply must END on a promise to do tool work ("Let me check the logs."),
+# so answers that close with "I'll keep an eye on it" are not stalls.
 _TOOL_NARRATION_RE = re.compile(
-    r"^\s*(let me|i'll|i will|now let me|i'm going to)\b", re.IGNORECASE
+    r"(?:^|[\n.!?—–])\s*(?:now,?\s+|first,?\s+|ok(?:ay)?,?\s+)?"
+    r"(?:let me|i['’]ll|i will|i['’]m going to)\s+(?:now\s+|first\s+|quickly\s+|just\s+|also\s+)?"
+    r"(?:check|look|search|run|read|open|find|fetch|get|pull|try|call|use|query|inspect|list|grep|"
+    r"create|write|edit|update|scan|browse|load|start|install|verify|investigate|examine)\b"
+    r"[^\n.!?—–]*[.!?:…]*\s*$",
+    re.IGNORECASE,
 )
 
 
 def _is_tool_narration_only(text: str) -> bool:
-    value = str(text or "")
-    return len(value) < 300 and bool(_TOOL_NARRATION_RE.match(value))
+    value = str(text or "").strip()
+    return len(value) < 300 and bool(_TOOL_NARRATION_RE.search(value))
 
 
 def _is_local_tool_stall(
@@ -5408,6 +5420,7 @@ async def stream_agent_loop(
         })
         if (
             not tool_stall_retry_used
+            and not tool_events
             and _is_local_openai_compat_url(endpoint_url)
             and _is_local_tool_stall(
                 round_response,

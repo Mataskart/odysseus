@@ -93,3 +93,27 @@ def test_build_context_preface_web_search_query_sanitization(monkeypatch):
     called_query = mock_web_search.call_args[0][0]
     assert len(called_query) <= 150
     assert "  " not in called_query
+
+
+def test_search_query_extraction_sees_previous_exchange(monkeypatch):
+    mock_llm_call = MagicMock(return_value="Kaunas castle ticket price")
+    monkeypatch.setattr("src.llm_core.llm_call", mock_llm_call)
+    monkeypatch.setattr("src.chat_processor.comprehensive_web_search", MagicMock(return_value=("", [])))
+
+    processor = ChatProcessor(memory_manager=MagicMock(), personal_docs_manager=MagicMock())
+    session = SimpleNamespace(endpoint_url="http://local", model="test", headers={}, history=[
+        {"role": "user", "content": "What is worth seeing in Kaunas?"},
+        {"role": "assistant", "content": "<think>plan</think>Kaunas Castle is a highlight."},
+        {"role": "user", "content": "and what about the price?"},
+    ])
+
+    processor.build_context_preface(
+        message="and what about the price?", session=session,
+        use_web=True, use_rag=False, use_memory=False, use_skills=False,
+    )
+
+    prompt = mock_llm_call.call_args.args[2][1]["content"]
+    assert "assistant: Kaunas Castle is a highlight." in prompt
+    assert "<think>" not in prompt
+    assert prompt.endswith("Current message:\nand what about the price?")
+    assert prompt.count("and what about the price?") == 1

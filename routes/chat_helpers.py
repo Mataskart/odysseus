@@ -744,7 +744,9 @@ async def build_chat_context(
         use_skills=skills_enabled,
     )
     if (
-        looks_like_study_question(_ctx_msg)
+        use_rag is None
+        and not casual_low_signal
+        and looks_like_study_question(_ctx_msg)
         and not incognito
         and allow_tool_preprocessing
         and not is_research_spinoff
@@ -752,10 +754,13 @@ async def build_chat_context(
         use_rag_val = True
     if use_rag is not None or is_research_spinoff or casual_low_signal or use_rag_val:
         _preface_kwargs["use_rag"] = use_rag_val
-    preface, rag_sources, web_sources = chat_processor.build_context_preface(**_preface_kwargs)
+    def _build_preface():
+        # Runs in a worker thread: auto-search and query extraction block for seconds.
+        # Used memories are tracked per thread, so read them in the same thread.
+        built = chat_processor.build_context_preface(**_preface_kwargs)
+        return built, list(getattr(chat_processor, '_last_used_memories', []))
 
-    # Capture used memories immediately
-    used_memories = getattr(chat_processor, '_last_used_memories', [])
+    (preface, rag_sources, web_sources), used_memories = await asyncio.to_thread(_build_preface)
 
     # Inject pre-fetched search context (compare mode)
     if search_context and allow_tool_preprocessing and not casual_low_signal:

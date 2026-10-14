@@ -122,6 +122,15 @@ def tokenize(s: str) -> Set[str]:
     tokens = re.findall(r"[A-Za-z0-9_\-]+", text.lower())
     return set(t for t in tokens if t not in config.STOP_WORDS and len(t) > 1)
 
+def _read_document_text(path: str) -> str:
+    ext = os.path.splitext(path)[1].lower()
+    if ext == ".pdf":
+        return extract_pdf_text(path)
+    if ext in MARKITDOWN_EXTS:
+        return extract_office_text(path)
+    return read_text_file(path)
+
+
 def catalog_personal_files(
     personal_dir: str,
     extensions: Tuple[str, ...] = config.DEFAULT_EXTENSIONS
@@ -146,6 +155,8 @@ def catalog_personal_files(
                 "path": path,
                 "size": os.path.getsize(path),
                 "chunks": [],
+                # Read on first keyword-fallback use; see retrieve_personal_keyword.
+                "_chunks_pending": True,
             })
     return files
 
@@ -175,14 +186,7 @@ def load_personal_index(
             if name in ("indexed_directories.json", "excluded_files.json"):
                 continue
             size = os.path.getsize(p)
-            ext = os.path.splitext(name)[1].lower()
-            if ext == ".pdf":
-                text = extract_pdf_text(p)
-            elif ext in MARKITDOWN_EXTS:
-                text = extract_office_text(p)
-            else:
-                text = read_text_file(p)
-            chunks = split_chunks(text)
+            chunks = split_chunks(_read_document_text(p))
             display = os.path.relpath(p, personal_dir)
             files.append({"name": display, "path": p, "size": size, "chunks": chunks})
     return files
@@ -207,6 +211,13 @@ def retrieve_personal_keyword(personal_index: List[Dict], query: str, k: int = 5
     for f in personal_index:
         if not isinstance(f, dict):
             continue
+        if f.pop("_chunks_pending", False):
+            # Cataloged folders skip extraction at startup; the vector index
+            # normally answers, so only this fallback pays for reading them.
+            try:
+                f["chunks"] = split_chunks(_read_document_text(f.get("path", "")))
+            except Exception as exc:
+                logger.warning(f"Keyword fallback could not read {f.get('path')}: {exc}")
         for idx, ch in enumerate(f.get("chunks") or []):
             score = len(q & tokenize(ch))
             if score > 0:

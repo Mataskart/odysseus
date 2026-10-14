@@ -43,6 +43,8 @@ let _nextAvailablePort;
 
 // Storage keys
 const SERVE_STATE_KEY = 'cookbook-serve-state';
+// repo -> unlaunched serve form captured when the Cookbook was reopened.
+const _serveDrafts = new Map();
 const SERVE_FAVORITES_KEY = 'cookbook-serve-favorite-models';
 
 let _cachedAllModels = [];
@@ -927,7 +929,8 @@ function _ggufFilesForModel(model) {
 function _runnableGgufFiles(model) {
   const files = _ggufFilesForModel(model);
   const primary = files.filter(f => (f.role || 'model') === 'model');
-  return primary.length ? primary : files;
+  // Never offer a drafter or projector as the main model.
+  return primary.length ? primary : files.filter(f => !_isDrafterGguf(f) && (f.role || '') !== 'projector');
 }
 
 function _selectedGgufSizeGb(model, relPath) {
@@ -943,13 +946,27 @@ function _projectorGgufFiles(model) {
     .sort((a, b) => String(a.rel_path || a.name || '').localeCompare(String(b.rel_path || b.name || '')));
 }
 
+function _isDrafterGguf(f) {
+  return (f.role || '') === 'drafter' || /(^|\/)mtp-[^/]*\.gguf$/i.test(f.rel_path || f.name || '');
+}
+
+// In the HF cache rel_path starts with the snapshot revision; a companion file
+// from another revision may not match the selected weights.
+function _inSameSnapshot(model, files, mainRelPath) {
+  if (!mainRelPath || model?.is_local_dir) return files;
+  const snapshot = String(mainRelPath).split('/')[0];
+  return files.filter(f => String(f.rel_path || '').split('/')[0] === snapshot);
+}
+
 // Repo-root drafter first: repos like unsloth's ship the recommended quant at
-// the root and larger alternates (e.g. BF16) under an MTP/ subfolder.
-function _drafterGgufFiles(model) {
-  const depth = f => String(f.rel_path || f.name || '').split('/').length;
-  return _ggufFilesForModel(model)
-    .filter(f => (f.role || '') === 'drafter' || /(^|\/)mtp-[^/]*\.gguf$/i.test(f.rel_path || f.name || ''))
-    .sort((a, b) => depth(a) - depth(b) || String(a.rel_path || a.name || '').localeCompare(String(b.rel_path || b.name || '')));
+// the root and larger alternates (e.g. BF16) under an MTP/ subfolder. Within a
+// folder, prefer a quantized drafter over full-precision copies.
+function _drafterGgufFiles(model, mainRelPath = '') {
+  const path = f => String(f.rel_path || f.name || '');
+  const depth = f => path(f).split('/').length;
+  const fullPrecision = f => (/(^|[-_.])(bf16|f16|f32)([-_.]|$)/i.test(path(f).split('/').pop()) ? 1 : 0);
+  return _inSameSnapshot(model, _ggufFilesForModel(model).filter(_isDrafterGguf), mainRelPath)
+    .sort((a, b) => depth(a) - depth(b) || fullPrecision(a) - fullPrecision(b) || path(a).localeCompare(path(b)));
 }
 
 function _ggufFileLabel(file) {
@@ -1405,10 +1422,13 @@ function _rerenderCachedModels() {
       const _byRepo = (_allSs && typeof _allSs === 'object' && _allSs._byRepo) || {};
       const _lastUsed = (_allSs && typeof _allSs === 'object' && _allSs._lastUsed) || null;
       const _isLegacyFlat = _allSs && typeof _allSs === 'object' && !_allSs._byRepo && !_allSs._lastUsed;
-      const ss = (_byRepo[repo] && typeof _byRepo[repo] === 'object')
-        ? _byRepo[repo]
-        : (_lastUsed || (_isLegacyFlat ? _allSs : {}));
-      const _modelSs = (_byRepo[repo] && typeof _byRepo[repo] === 'object') ? _byRepo[repo] : null;
+      // An unlaunched form captured when the Cookbook was reopened wins once,
+      // without touching the saved launch settings.
+      const _draft = _serveDrafts.get(repo);
+      _serveDrafts.delete(repo);
+      const _savedSs = (_byRepo[repo] && typeof _byRepo[repo] === 'object') ? _byRepo[repo] : null;
+      const _modelSs = _draft ? { ...(_savedSs || {}), ..._draft, _forceBackend: true } : _savedSs;
+      const ss = _modelSs || _lastUsed || (_isLegacyFlat ? _allSs : {});
       const _repoForcedBackend = !!(_modelSs && _modelSs._forceBackend);
       const _isMiniMaxM3 = _isMiniMaxM3Model({ ...m, repo_id: repo });
       const _isMiniMaxM2 = _isMiniMaxM2Model({ ...m, repo_id: repo });
@@ -1890,10 +1910,10 @@ function _rerenderCachedModels() {
           // Vision: use the scanned projector (CLIP/mmproj) file when present.
           // Keeping this as a printf path avoids generating a command substitution
           // that the backend serve-command validator must reject as unsafe.
-          const selectedProjector = _projectorGgufFiles(m)[0];
+          const selectedProjector = _inSameSnapshot(m, _projectorGgufFiles(m), selectedGguf?.rel_path)[0];
           f._mmproj_path = selectedProjector ? _selectedGgufExpr(m, repo, selectedProjector.rel_path) : '';
           // Separate MTP drafter (e.g. Gemma 4's mtp-*.gguf); Qwen MTP GGUFs embed the heads instead.
-          const selectedDrafter = _drafterGgufFiles(m)[0];
+          const selectedDrafter = _drafterGgufFiles(m, selectedGguf?.rel_path)[0];
           f._mtp_draft_path = selectedDrafter ? _selectedGgufExpr(m, repo, selectedDrafter.rel_path) : '';
         }
         if (f.reasoning_parser) {
@@ -3982,11 +4002,15 @@ function _retryCachedModel(repo, m) {
 // field values into the per-repo serve state so the panel's existing
 // restore logic fills the form exactly, switches to the Serve tab, then
 // finds the model's cached card and expands it.
-export async function openServePanelForRepo(repo, fields) {
+export async function openServePanelForRepo(repo, fields, { draft = false } = {}) {
   if (!repo) return false;
-  // Seed the per-repo serve state with the exact launch fields so the
-  // panel restores them when it builds.
-  if (fields && typeof fields === 'object') {
+  if (draft && fields && typeof fields === 'object') {
+    // Reopen restore: keep the unlaunched form in memory only, so it never
+    // replaces the saved launch settings or other models' defaults.
+    _serveDrafts.set(repo, fields);
+  } else if (fields && typeof fields === 'object') {
+    // Seed the per-repo serve state with the exact launch fields so the
+    // panel restores them when it builds.
     try {
       let cur = {};
       try { cur = JSON.parse(localStorage.getItem(SERVE_STATE_KEY)) || {}; } catch {}

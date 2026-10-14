@@ -1,8 +1,10 @@
 """Search provider implementations: SearXNG, Brave, DuckDuckGo, Google PSE, Tavily, Serper."""
 
+import html
 import json
 import logging
 import os
+import re
 from typing import List, Optional
 from urllib.parse import urljoin, urlparse, parse_qs
 
@@ -11,7 +13,6 @@ from bs4 import BeautifulSoup
 
 from src.constants import SEARXNG_INSTANCE, REQUEST_TIMEOUT, WEB_FETCH_USER_AGENT
 from .analytics import RateLimitError, error_logger
-from .query import build_enhanced_query
 
 logger = logging.getLogger(__name__)
 
@@ -288,9 +289,25 @@ def brave_search(query: str, count: Optional[int] = None, time_filter: Optional[
     return _brave_search_impl(query, count, time_filter, search_config={"brave_api_key": api_key})
 
 
+# Brave's API takes the search box query as-is; the generic boolean enhancer
+# adds "OR (method)" style noise and an "after:" operator Brave does not know.
+_BRAVE_FRESHNESS = {"day": "pd", "week": "pw", "month": "pm", "year": "py"}
+_BRAVE_TIMEOUT = 8
+_HTML_TAG_RE = re.compile(r"<[^>]+>")
+
+
+def _brave_text(value) -> str:
+    """Brave highlights matches with <strong>; keep plain text for the model."""
+    return html.unescape(_HTML_TAG_RE.sub("", str(value or ""))).strip()
+
+
 def _brave_search_impl(query: str, count: int, time_filter: Optional[str] = None, search_config: dict = None) -> List[dict]:
-    """Core Brave API call. Returns a list of result dicts or an empty list on failure."""
-    enhanced_query = build_enhanced_query(query, time_filter)
+    """Core Brave API call. Returns a list of result dicts or an empty list on failure.
+
+    Raises RateLimitError on HTTP 429 so the provider chain moves on instead of
+    spending another request on an immediate retry.
+    """
+    enhanced_query = " ".join(str(query or "").split())
     config = search_config or {}
 
     brave_api_key = config.get("brave_api_key")
@@ -304,13 +321,13 @@ def _brave_search_impl(query: str, count: int, time_filter: Optional[str] = None
     headers = {"X-Subscription-Token": brave_api_key, "Accept": "application/json"}
     params = {
         "q": enhanced_query,
-        "count": count,
+        "count": min(max(int(count or 10), 1), 20),
         "safesearch": _safesearch_for("brave"),
+        "result_filter": "web",
+        "extra_snippets": "true",
     }
-    if time_filter:
-        time_map = {"day": "day", "week": "week", "month": "month", "year": "year"}
-        if time_filter in time_map:
-            params["freshness"] = time_map[time_filter]
+    if time_filter in _BRAVE_FRESHNESS:
+        params["freshness"] = _BRAVE_FRESHNESS[time_filter]
 
     logger.info(f"Executing Brave search with query: {enhanced_query}")
     try:
@@ -318,16 +335,17 @@ def _brave_search_impl(query: str, count: int, time_filter: Optional[str] = None
             "https://api.search.brave.com/res/v1/web/search",
             headers=headers,
             params=params,
-            timeout=REQUEST_TIMEOUT,
+            timeout=_BRAVE_TIMEOUT,
         )
-        if response.status_code == 429:
-            raise RateLimitError("Brave rate limit hit")
         response.raise_for_status()
+    except httpx.HTTPStatusError as e:
+        if e.response.status_code == 429:
+            error_logger.error("Brave rate limit hit")
+            raise RateLimitError("Brave rate limit hit (HTTP 429)") from e
+        error_logger.error(f"Brave search HTTP {e.response.status_code}: {e}")
+        return []
     except httpx.RequestError as e:
         error_logger.error(f"NetworkError during Brave search: {e}")
-        return []
-    except RateLimitError as e:
-        error_logger.error(str(e))
         return []
 
     try:
@@ -342,11 +360,13 @@ def _brave_search_impl(query: str, count: int, time_filter: Optional[str] = None
             url = item.get("url", "")
             if not url:
                 continue
+            snippet = _brave_text(item.get("description") or item.get("content"))
+            extra = [_brave_text(text) for text in (item.get("extra_snippets") or [])[:2]]
             results.append({
-                "title": item.get("title", ""),
+                "title": _brave_text(item.get("title")),
                 "url": url,
-                "snippet": item.get("description", "") or item.get("content", ""),
-                "age": item.get("date", "") if item.get("date") else "",
+                "snippet": " … ".join(part for part in [snippet, *extra] if part),
+                "age": item.get("age") or item.get("page_age") or "",
             })
 
     logger.info(f"Brave search returned {len(results)} results")

@@ -36,7 +36,10 @@ def check_messages(path: Path, row: dict) -> None:
             arguments = function.get("arguments")
             if not name or not isinstance(arguments, str):
                 raise SystemExit(f"{path.name}: {row.get('id')} tool call needs name and string arguments")
-            json.loads(arguments)
+            try:
+                json.loads(arguments)
+            except json.JSONDecodeError as error:
+                raise SystemExit(f"{path.name}: {row.get('id')} tool call {name} has invalid JSON arguments: {error}")
 
 
 def main() -> None:

@@ -175,7 +175,7 @@ def test_llamacpp_vision_uses_scanned_projector_instead_of_runtime_find():
     text = SERVE_SRC.read_text(encoding="utf-8")
 
     assert "function _projectorGgufFiles(model)" in text
-    assert "const selectedProjector = _projectorGgufFiles(m)[0];" in text
+    assert "const selectedProjector = _inSameSnapshot(m, _projectorGgufFiles(m), selectedGguf?.rel_path)[0];" in text
     assert "f._mmproj_path = selectedProjector ? _selectedGgufExpr(m, repo, selectedProjector.rel_path) : '';" in text
     assert "const missingVisionProjector = backend === 'llamacpp' && !!f.vision && !f._mmproj_path;" in text
     assert "hwfit-serve-vision-warn" in text

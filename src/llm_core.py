@@ -2048,6 +2048,9 @@ def llm_call(url: str, model: str, messages: List[Dict], temperature: float = LL
             # llama.cpp and vLLM pass this to Qwen-style chat templates. Hosted
             # APIs may reject unknown fields, so it is sent to local servers only.
             payload["chat_template_kwargs"] = {"enable_thinking": False}
+            if _is_ollama_openai_compat_url(url):
+                # Ollama's /v1 endpoint ignores chat_template_kwargs.
+                payload["think"] = False
     try:
         note_model_activity(target_url, model)
         r = httpx_post_kimi_aware(target_url, h, json=payload, timeout=timeout)
