@@ -1968,8 +1968,14 @@ def normalize_model_id(
 
 def llm_call(url: str, model: str, messages: List[Dict], temperature: float = LLMConfig.DEFAULT_TEMPERATURE,
              max_tokens: int = LLMConfig.DEFAULT_MAX_TOKENS, headers: Optional[Dict] = None,
-             timeout: int = LLMConfig.DEFAULT_TIMEOUT, prompt_type: Optional[str] = None) -> str:
-    """Synchronous LLM call with optional prompt type enhancement."""
+             timeout: int = LLMConfig.DEFAULT_TIMEOUT, prompt_type: Optional[str] = None,
+             thinking: Optional[bool] = None) -> str:
+    """Synchronous LLM call with optional prompt type enhancement.
+
+    ``thinking=False`` asks local reasoning models to answer directly. Short
+    utility calls need this: with a small max_tokens a thinking model spends the
+    whole budget reasoning and returns no answer.
+    """
     h = _provider_headers(_detect_provider(url))
     # Tolerate headers that arrive as a JSON string (some sessions stored them
     # double-encoded) — otherwise h.update() throws "dictionary update sequence
@@ -2001,6 +2007,8 @@ def llm_call(url: str, model: str, messages: List[Dict], temperature: float = LL
     cache_key = _get_cache_key(
         url, model, messages_copy, temperature, max_tokens, headers=headers,
     )
+    if thinking is not None:
+        cache_key = f"{cache_key}:thinking={thinking}"
     cached_response = _get_cached_response(cache_key)
     if cached_response:
         logger.debug(f"Returning cached response for key: {cache_key}")
@@ -2016,6 +2024,8 @@ def llm_call(url: str, model: str, messages: List[Dict], temperature: float = LL
             model, messages_copy, temperature, max_tokens,
             stream=False, num_ctx=get_context_length(url, model),
         )
+        if thinking is False:
+            payload["think"] = False
     else:
         target_url = _normalize_openai_chat_url(url)
         if provider == "copilot":
@@ -2034,6 +2044,10 @@ def llm_call(url: str, model: str, messages: List[Dict], temperature: float = LL
         _apply_local_generation_stability(payload, target_url, model)
         if provider == "mistral" and _supports_thinking(model):
             payload["reasoning_effort"] = _MISTRAL_REASONING_EFFORT
+        if thinking is False and is_local_endpoint(target_url):
+            # llama.cpp and vLLM pass this to Qwen-style chat templates. Hosted
+            # APIs may reject unknown fields, so it is sent to local servers only.
+            payload["chat_template_kwargs"] = {"enable_thinking": False}
     try:
         note_model_activity(target_url, model)
         r = httpx_post_kimi_aware(target_url, h, json=payload, timeout=timeout)
@@ -2057,6 +2071,9 @@ def llm_call(url: str, model: str, messages: List[Dict], temperature: float = LL
                     response = thinking_part + "\n\n" + (text_part or "")
                 else:
                     response = text_part or msg.get("reasoning_content") or ""
+            elif thinking is False:
+                # Reasoning text is not an answer; callers fall back on an empty reply.
+                response = content or ""
             else:
                 response = content or msg.get("reasoning_content") or ""
         _set_cached_response(cache_key, response)

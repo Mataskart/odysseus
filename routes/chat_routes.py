@@ -64,6 +64,7 @@ from routes.chat_helpers import (
     clean_thinking_for_save,
     _allowed_models_for_request,
     _enforce_chat_privileges,
+    preset_temperature,
 )
 from src.action_intents import ToolIntent, classify_tool_intent as _classify_tool_intent
 from src.image_model_ids import looks_like_image_generation_model
@@ -896,7 +897,7 @@ def setup_chat_routes(
             request_messages,
             fallback_statuses=foreground_policy.eligible_statuses,
             candidate_request_factory=candidate_request_factory,
-            temperature=ctx.preset.temperature,
+            temperature=preset_temperature(ctx.preset, sess.model),
             max_tokens=ctx.preset.max_tokens,
             prompt_type=preset_id,
             session_id=session,
@@ -2037,7 +2038,7 @@ def setup_chat_routes(
                     async for chunk in stream_llm_with_fallback(
                         _foreground_candidates,
                         messages,
-                        temperature=ctx.preset.temperature,
+                        temperature=preset_temperature(ctx.preset, sess.model),
                         # Respect the preset; 0/unset = let the server decide (no
                         # cap), matching agent mode. The old hard 4096 fallback
                         # truncated reasoning models mid-<think> — they'd burn the
@@ -2424,7 +2425,7 @@ def setup_chat_routes(
                         sess.model,
                         messages,
                         headers=sess.headers,
-                        temperature=ctx.preset.temperature,
+                        temperature=preset_temperature(ctx.preset, sess.model),
                         max_tokens=ctx.preset.max_tokens,
                         prompt_type=preset_id,
                         max_tool_calls=_tool_budget,

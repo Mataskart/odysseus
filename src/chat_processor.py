@@ -430,6 +430,7 @@ class ChatProcessor:
                         temperature=0.1,
                         max_tokens=50,
                         timeout=15,
+                        thinking=False,
                     ).strip()
 
                     if generated_query:

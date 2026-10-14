@@ -80,6 +80,11 @@ class ChatHandler:
     # Preset helpers
     # ------------------------------------------------------------------
 
+    def preset_sets_temperature(self, preset_id: Optional[str]) -> bool:
+        """True when an enabled preset explicitly chooses a temperature."""
+        preset = self.preset_manager.presets.get(preset_id) if preset_id else None
+        return bool(preset) and preset.get("enabled") is not False and "temperature" in preset
+
     def validate_and_extract_preset(self, preset_id: Optional[str]) -> tuple:
         """Returns (temperature, max_tokens, preset_system_prompt, character_name)."""
         if preset_id and preset_id not in self.preset_manager.presets:

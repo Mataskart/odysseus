@@ -111,6 +111,8 @@ PASSWORD_MIN_LENGTH = 8
 
 # Default parameters
 DEFAULT_TEMPERATURE = 1.0
+# Qwen's recommended thinking-mode temperature, used when no preset sets one.
+QWEN_DEFAULT_TEMPERATURE = 0.6
 DEFAULT_MAX_TOKENS = 0
 
 

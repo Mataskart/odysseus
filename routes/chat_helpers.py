@@ -12,6 +12,7 @@ from typing import Any, Optional
 from core.models import ChatMessage
 from core.database import SessionLocal
 from core.database import Session as DBSession, ModelEndpoint
+from src.constants import QWEN_DEFAULT_TEMPERATURE
 from src.llm_core import normalize_model_id
 from src.endpoint_resolver import normalize_base
 from src.context_compactor import maybe_compact, trim_for_context
@@ -114,6 +115,14 @@ class PresetInfo:
     max_tokens: Optional[int]
     system_prompt: Optional[str]
     character_name: Optional[str]
+    temperature_explicit: bool = True
+
+
+def preset_temperature(preset, model: Optional[str]) -> Optional[float]:
+    """Use Qwen's recommended temperature unless a preset chose one."""
+    if not getattr(preset, "temperature_explicit", True) and "qwen" in (model or "").lower():
+        return QWEN_DEFAULT_TEMPERATURE
+    return preset.temperature
 
 
 @dataclass
@@ -324,6 +333,7 @@ def extract_preset(chat_handler, preset_id) -> PresetInfo:
         max_tokens=max_tokens,
         system_prompt=system_prompt,
         character_name=char_name,
+        temperature_explicit=chat_handler.preset_sets_temperature(preset_id),
     )
 
 
