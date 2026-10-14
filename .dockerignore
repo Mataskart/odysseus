@@ -52,3 +52,6 @@ timetree*.png
 *_signin_page.png
 *_calendar_view.png
 .gitignore
+
+# Private exported conversations and reviewed training candidates
+local_finetune/seed_chats/

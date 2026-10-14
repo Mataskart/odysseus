@@ -120,3 +120,20 @@ compound.config.json
 *.error.log
 _scratch/
 /odysseus/
+
+# Local fine-tuning workspace: private exported conversations, reviewed
+# training candidates, data-preparation scripts, reports and run outputs.
+# Files already tracked under local_finetune/ stay tracked.
+/local_finetune/
+# Tests for the local training-data scripts (they need the ignored workspace)
+/tests/test_audited_training_mix.py
+/tests/test_chat_export_preparation.py
+/tests/test_native_training.py
+/tests/test_odysseus_chat_import.py
+/tests/test_qwen_training_preparation.py
+/tests/test_seed_bulk_review.py
+/tests/test_seed_repair.py
+/tests/test_synthetic_expansion.py
+/tests/test_synthetic_pilot.py
+/tests/test_training_context_reductions.py
+/tests/test_unseen_evaluations.py
