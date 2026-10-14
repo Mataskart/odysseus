@@ -49,6 +49,7 @@ _PANEL = (
 _ROUTING_PATTERNS: tuple[tuple[str, str, Pattern[str]], ...] = tuple(
     (category, reason, re.compile(pattern, re.I))
     for category, reason, pattern in (
+        ("judgment", "explicit OpenJev delegation", r"\b(?:use|ask|delegate\s+to|check\s+with)\s+openjev\b"),
         # Calendar/event creation. Covers "Can you add an entry to my
         # calendar?", imperatives like "add lunch to my calendar", and
         # follow-ups such as "you should be able to create that event now".
@@ -136,6 +137,11 @@ _ROUTING_PATTERNS: tuple[tuple[str, str, Pattern[str]], ...] = tuple(
         ("shell", "system/file check request", r"\b(check|see)\s+(if|whether|what)\s+.{1,40}\b(running|process|service|port|file|exists?)\b"),
         ("shell", "live system count question", r"\bhow\s+many\s+(?:processes|threads|connections|containers|cores|gpus?|open\s+ports?)\b"),
         ("web", "trailing web search request", r"\b(?:search\s+the\s+web|search\s+online|look\s+it\s+up(?:\s+online)?|google\s+it)\b\s*[.!?]*\s*$"),
+        # Counting questions go to the judge only when no concrete shell, web,
+        # calendar or other tool intent matched first ("how many processes…").
+        ("judgment", "focused counting delegation", rf"{_PLEASE}(?:count\b|how\s+many\b|suskaičiuok\b|kiek\b).+"),
+        ("judgment", "counting question delegation", r"\b(?:how\s+many|suskaičiuok|kiek)\b.+"),
+        ("judgment", "assistant counting delegation", rf"{_ACTION_QUESTION}count\b.+"),
     )
 )
 

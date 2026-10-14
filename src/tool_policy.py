@@ -61,6 +61,7 @@ _COMMON_TOOL_NAMES = {
     "builtin_browser",
     "cancel_download",
     "chat_with_model",
+    "openjev_judge",
     "create_document",
     "create_session",
     "delete_email",

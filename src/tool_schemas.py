@@ -35,6 +35,74 @@ FUNCTION_TOOL_SCHEMAS = [
     {
         "type": "function",
         "function": {
+            "name": "openjev_judge",
+            "description": "Focused lookski/openjev local causal-LM judgments. choice criteria MUST be a JSON object with 2..26 named options, NEVER an array; each value fully describes its option, e.g. {\"billing\":\"Payments and invoices\",\"technical\":\"Bugs and outages\"}. Semantic counts 0..9: score with consecutive levels from zero; use most_likely_level, not fractional score. Optional short-text presence/status classification and explicit rubric second opinions; small tests, no general accuracy advantage, weaker Lithuanian. No search or generated reasoning trace. Avoid arithmetic/character counting (use code), unsupported factual lookup (use search), multi-step/temporal reasoning, conflicting evidence and permission/safety/high-stakes decisions, except explicitly requested diagnostic tests. RAG reranking is unvalidated. Send complete relevant evidence only, preserving negation and quoted boundaries; one or two questions, no invented facts or unrelated history. Include an unknown choice when evidence may be insufficient; noul cannot express unknown. Uncalibrated label preferences are not correctness probabilities; high confidence can be wrong. Check independently and report disagreement. If unavailable use another method; never claim verification merely because this ran.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "state": {
+                        "type": "string", "minLength": 1, "maxLength": 6000,
+                        "description": "Complete relevant evidence only, not just the question or a preferred answer. No search/history is available to this endpoint. Each rendered question must fit the service's 2048-token limit; oversized input is rejected, never truncated.",
+                    },
+                    "questions": {
+                        "type": "object", "minProperties": 1, "maxProperties": 2,
+                        "description": "Batch one or two named questions about the same evidence in this single call. choice example: {\"route\":{\"type\":\"choice\",\"instructions\":\"Which team?\",\"criteria\":{\"billing\":\"Payments and invoices\",\"technical\":\"Bugs and outages\"}}}. score uses an array; noul omits criteria.",
+                        "propertyNames": {"type": "string", "minLength": 1, "maxLength": 64},
+                        "additionalProperties": {
+                            "oneOf": [
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "type": {"type": "string", "enum": ["choice"]},
+                                        "instructions": {"type": "string", "minLength": 1, "maxLength": 1000},
+                                        "criteria": {
+                                            "type": "object", "minProperties": 2, "maxProperties": 26,
+                                            "description": "REQUIRED JSON object, NEVER an array. Keys are stable option names; values fully describe the meaning. Example: {\"present\":\"Explicitly present now\",\"absent\":\"Explicitly absent now\",\"unknown\":\"Current presence is not established\"}.",
+                                            "propertyNames": {"type": "string", "minLength": 1},
+                                            "additionalProperties": {"type": "string", "minLength": 1, "maxLength": 500},
+                                        },
+                                    },
+                                    "required": ["type", "instructions", "criteria"],
+                                    "additionalProperties": False,
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "type": {"type": "string", "enum": ["score"]},
+                                        "instructions": {"type": "string", "minLength": 1, "maxLength": 1000},
+                                        "criteria": {
+                                            "type": "array", "minItems": 2, "maxItems": 10,
+                                            "description": "REQUIRED ordered array, e.g. [\"Zero present\",\"One present\",\"Two present\"]. Indices start at 0. most_likely_level is a rubric index; score is its fractional weighted mean.",
+                                            "items": {"type": "string", "minLength": 1, "maxLength": 500},
+                                        },
+                                    },
+                                    "required": ["type", "instructions", "criteria"],
+                                    "additionalProperties": False,
+                                },
+                                {
+                                    "type": "object",
+                                    "properties": {
+                                        "type": {"type": "string", "enum": ["noul"]},
+                                        "instructions": {
+                                            "type": "string", "minLength": 1, "maxLength": 1000,
+                                            "description": "Yes/no question grounded in state. Returns P(Yes); near 0.5 is inconclusive. No unknown state; use choice with unknown for insufficient evidence. Omit criteria entirely.",
+                                        },
+                                    },
+                                    "required": ["type", "instructions"],
+                                    "additionalProperties": False,
+                                },
+                            ],
+                        },
+                    },
+                },
+                "required": ["state", "questions"],
+                "additionalProperties": False,
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "bash",
             "description": "Run a shell command on the user's machine. Shell access is granted. Use it for system info, processes, git, installs, and builds, including nvidia-smi. Prefer read_file, grep, glob, or ls for file contents. Do not create or edit files with redirects, heredocs, or sed -i.",
             "parameters": {

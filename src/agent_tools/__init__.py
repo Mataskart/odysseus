@@ -27,6 +27,7 @@ from .document_tools import CreateDocumentTool, UpdateDocumentTool, EditDocument
 from .interaction_tools import AskUserTool, UpdatePlanTool
 from .model_interaction_tools import ChatWithModelTool, AskTeacherTool, ListModelsTool
 from .bg_job_tools import ManageBgJobsTool
+from src.tools.openjev import OpenJevTool
 from .session_tools import CreateSessionTool, ListSessionsTool, SendToSessionTool, ManageSessionTool
 from .admin_tools import (
     ADMIN_TOOL_HANDLERS,
@@ -35,6 +36,7 @@ from .admin_tools import (
 )
 
 TOOL_HANDLERS = {
+    "openjev_judge": OpenJevTool().execute,
     "bash": BashTool().execute,
     "python": PythonTool().execute,
     "web_search": WebSearchTool().execute,
@@ -77,6 +79,7 @@ PYTHON_TIMEOUT = 30
 
 # Tool types that trigger execution
 TOOL_TAGS = {"bash", "python", "web_search", "web_fetch", "read_file", "write_file", "edit_file",
+             "openjev_judge",
              "apply_patch", "todowrite",
              "grep", "glob", "ls", "get_workspace", "manage_bg_jobs",
              "create_document", "update_document", "edit_document",

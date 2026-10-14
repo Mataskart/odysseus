@@ -187,7 +187,7 @@ _register(
     result_integrity=ResultIntegrity.EXTERNAL_UNTRUSTED,
 )
 _register(
-    {"chat_with_model", "ask_teacher"},
+    {"chat_with_model", "ask_teacher", "openjev_judge"},
     ToolEffect.NETWORK_EGRESS,
     result_integrity=ResultIntegrity.EXTERNAL_UNTRUSTED,
 )

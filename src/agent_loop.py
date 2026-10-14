@@ -30,6 +30,7 @@ from src.context_compactor import (
     maybe_compact,
 )
 from src.settings import get_setting
+from src.tools.openjev import TOOL_GUIDANCE as OPENJEV_TOOL_GUIDANCE
 from src.prompt_security import runtime_note_for_model, untrusted_context_message
 from src.tool_security import (
     blocked_tools_for_owner,
@@ -588,6 +589,7 @@ def _domain_rules_for_tools(tool_names: set) -> list[str]:
 # Each tool section is keyed by tool name(s) it covers.
 # Sections with multiple tools use a tuple key.
 TOOL_SECTIONS = {
+    "openjev_judge": "- ```openjev_judge``` — " + OPENJEV_TOOL_GUIDANCE + ' Call with JSON, for example {"state":"Payment was charged twice.","questions":{"route":{"type":"choice","instructions":"Which team should handle this?","criteria":{"billing":"Payments and invoices","technical":"Bugs and outages","unknown":"Insufficient evidence"}}}}.',
     "bash": """\
 ```bash
 <shell command>
@@ -890,6 +892,8 @@ def _assemble_prompt(tool_names: set, disabled_tools: set = None, compact: bool 
             "## Available tools\n" + ("\n".join(tool_lines) if tool_lines else "none"),
             _API_AGENT_RULES,
         ]
+        if "openjev_judge" in included:
+            parts.append(OPENJEV_TOOL_GUIDANCE)
         parts.extend(_domain_rules_for_tools(included))
         return "\n\n".join(parts)
 
@@ -4196,6 +4200,10 @@ async def stream_agent_loop(
         _relevant_tools.discard("update_plan")
         if _intent_domains:
             _relevant_tools.discard("ask_user")
+    from src.tools.openjev import select_tool as select_openjev_tool
+    _relevant_tools = await select_openjev_tool(
+        _relevant_tools, disabled_tools, guide_only, user_text=_last_user or "",
+    )
     _base_relevant_tools = None if _relevant_tools is None else set(_relevant_tools)
     _runtime_skill_tools: Set[str] = set()
 
@@ -6195,6 +6203,11 @@ async def stream_agent_loop(
                 output_text = _truncate(result["content"])
             elif "results" in result:
                 output_text = _truncate(result["results"])
+            elif block.tool_type == "openjev_judge" and "answers" in result:
+                output_text = _truncate(json.dumps({
+                    "model": result.get("model"), "answers": result["answers"],
+                    "advisory": True, "limitations": result.get("limitations"),
+                }, ensure_ascii=False))
             elif "session_id" in result and "name" in result:
                 output_text = f"Session created: {result['name']} (id: {result['session_id']})"
             elif "success" in result:

@@ -122,6 +122,7 @@ PLAN_MODE_READONLY_TOOLS = {
     "list_cookbook_servers",
     "resolve_contact",
     "chat_with_model",
+    "openjev_judge",
     "ask_teacher",
 }
 
