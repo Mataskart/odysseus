@@ -68,3 +68,18 @@ def test_unclosed_function_opener_flood_does_not_backtrack():
     started = time.monotonic()
     assert parse_tool_blocks('<tool_call>' + '<function=read_file>' * 20000) == []
     assert time.monotonic() - started < 1
+
+
+def test_flat_json_arguments_use_the_known_tool_schema():
+    text = '<tool_call>{"name":"read_file","path":"/srv/team/report"}</tool_call>'
+    blocks = parse_tool_blocks(text)
+    assert [(block.tool_type, block.content) for block in blocks] == [('read_file', '/srv/team/report')]
+
+
+@pytest.mark.parametrize('payload', [
+    {'name': 'read_file', 'path': '/srv/team/report', 'command': 'echo unsafe'},
+    {'name': 'files', 'path': '/srv/team/report'},
+    {'name': 'read_file', 'offset': 1},
+])
+def test_flat_json_unknown_fields_names_and_missing_paths_fail_closed(payload):
+    assert parse_tool_blocks('<tool_call>' + json.dumps(payload) + '</tool_call>') == []

@@ -1013,7 +1013,8 @@ def _parse_json_tool_call_body(body: str) -> Optional[ToolBlock]:
 
     Strict by design (issue #5187 / tracker #5333): the body must decode to an
     object with a string "name", and "arguments" — when present — must itself
-    be an object. Anything else returns None rather than being coerced, so a
+    be an object. Flat arguments must match a known tool's parameter names.
+    Anything else returns None rather than being coerced, so a
     malformed call is dropped instead of dispatching with mangled arguments.
     raw_decode tolerates trailing chatter after the JSON object; the trailing
     text is never scanned for tool markup. Conversion goes through
@@ -1034,8 +1035,18 @@ def _parse_json_tool_call_body(body: str) -> Optional[ToolBlock]:
         return None
     if "arguments" in parsed and not isinstance(parsed["arguments"], dict):
         return None
+    from src.tool_schemas import FUNCTION_TOOL_SCHEMAS, function_call_to_tool_block
     args = parsed.get("arguments", {})
-    from src.tool_schemas import function_call_to_tool_block
+    if "arguments" not in parsed:
+        args = {key: value for key, value in parsed.items() if key != "name"}
+        if args:
+            mapped = _TOOL_NAME_MAP.get(name.strip().lower(), name.strip().lower())
+            schema = next((schema['function']['parameters'] for schema in FUNCTION_TOOL_SCHEMAS
+                           if schema['function']['name'] == mapped), None)
+            if schema is None or not args.keys() <= schema.get('properties', {}).keys():
+                return None
+            if any(key not in args for key in schema.get('required', [])):
+                return None
     return function_call_to_tool_block(name.strip().lower(), json.dumps(args))
 
 

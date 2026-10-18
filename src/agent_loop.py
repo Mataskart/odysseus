@@ -4565,6 +4565,7 @@ async def stream_agent_loop(
     round_texts = []   # Cleaned text per round for history reload
     round_diagnostics = []
     tool_stall_retry_used = False
+    tool_format_retry_used = False
     round_models = []  # Actual model for each corresponding round
     round_endpoint_ids = []
     round_endpoint_labels = []
@@ -5489,6 +5490,32 @@ async def stream_agent_loop(
             is_api_model=(_is_api_model and not guide_only),
             allow_fenced_for_api=_ody_doc_finetune_mode,
         )
+        malformed_local_call = (
+            not tool_blocks and not _force_answer and not guide_only and all_tool_schemas
+            and _is_local_openai_compat_url(endpoint_url)
+            and (native_tool_calls or '<tool_call>' in round_response.lower())
+        )
+        if malformed_local_call:
+            if full_response.endswith(round_response) and round_response:
+                full_response = full_response[:-len(round_response)]
+            retry = not tool_format_retry_used and round_num < max_rounds
+            yield 'data: ' + json.dumps({
+                'type': 'tool_call_rejected', 'reason': 'invalid_tool_call_format', 'retry': retry,
+            }) + '\n\n'
+            if retry:
+                tool_format_retry_used = True
+                _prepend_agent_directive(messages, (
+                    'Your previous tool call could not be executed because its format or tool name was invalid. '
+                    'Use a native function call with the exact tool name and argument schema listed below. '
+                    'Available tool names: ' + ', '.join(_tool_names_sent) + '. '
+                    'Do not invent tool names or wrap a call in prose. Complete the original user request.'
+                ))
+                yield f'data: {json.dumps({"type": "agent_step", "round": round_num + 1})}\n\n'
+                continue
+            final = "I couldn't execute the tool call because the model repeatedly returned an invalid tool name or format."
+            full_response += '\n\n' + final
+            yield 'data: ' + json.dumps({'delta': '\n\n' + final}) + '\n\n'
+            break
         if _ody_doc_stream_create_mode and tool_blocks:
             create_idx = next(
                 (idx for idx, block in enumerate(tool_blocks) if block.tool_type == "create_document"),

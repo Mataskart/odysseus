@@ -92,6 +92,10 @@ def run_loop(monkeypatch, calls, results, user_text='Read the report', xml=False
         call = next(scripted_calls)
         if call is None:
             event = {'delta': 'Recovered reference: RQ-5827.'}
+        elif isinstance(call, str):
+            event = {'delta': call}
+        elif isinstance(call, tuple):
+            event = {'type': 'tool_calls', 'calls': [{'name': call[0], 'arguments': json.dumps(call[1])}]}
         elif xml:
             event = {'delta': ('<tool_call><function=read_file><parameter=path>' + call['path']
                                + '</parameter></function></tool_call>')}
@@ -146,3 +150,28 @@ def test_loop_does_not_put_a_global_budget_on_distinct_missing_files(monkeypatch
     assert len(executed) == 5
     assert len(requests) == 6
     assert not any(event.get('reason') == 'repeated_failed_read' for event in events)
+
+
+@pytest.mark.parametrize('invalid_call', [
+    '<tool_call>{"name":"files","command":"read","path":"/srv/team/report"}</tool_call>',
+    ('files', {'path': '/srv/team/report'}),
+])
+def test_malformed_call_retries_once_using_known_tools(monkeypatch, invalid_call):
+    executed, requests, events = run_loop(
+        monkeypatch, [invalid_call, {'path': '/srv/team/report'}, None],
+        [{'output': 'RQ-5827', 'exit_code': 0}],
+    )
+    assert len(executed) == 1
+    assert len(requests) == 3
+    assert any(event.get('type') == 'tool_call_rejected' and event['retry'] for event in events)
+    assert any('RQ-5827' in event.get('delta', '') for event in events)
+
+
+def test_malformed_call_retry_is_bounded_and_explains_failure(monkeypatch):
+    invalid_call = '<tool_call>{"name":"files","path":"/srv/team/report"}</tool_call>'
+    executed, requests, events = run_loop(monkeypatch, [invalid_call, invalid_call], [])
+    assert executed == []
+    assert len(requests) == 2
+    assert [event['retry'] for event in events if event.get('type') == 'tool_call_rejected'] == [True, False]
+    assert any('invalid tool name or format' in event.get('delta', '') for event in events)
+    assert not any(event.get('type') == 'rounds_exhausted' for event in events)
