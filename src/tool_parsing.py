@@ -134,6 +134,9 @@ _XML_DIRECT_OPEN_RE = re.compile(r"<\s*([A-Za-z_][\w-]*)\s*>", re.IGNORECASE)
 # parameter openers can't drive finditer's O(n^2) rescan. See _iter_named_blocks.
 _XML_PARAM_OPEN_RE = re.compile(r'<parameter\s+name=["\'](\w+)["\']>', re.IGNORECASE)
 _XML_PARAM_CLOSE_RE = re.compile(r'</parameter>', re.IGNORECASE)
+_QWEN_FUNCTION_OPEN_RE = re.compile(r'<function=([A-Za-z_][\w-]*)>', re.IGNORECASE)
+_QWEN_FUNCTION_CLOSE_RE = re.compile(r'</function>', re.IGNORECASE)
+_QWEN_PARAM_OPEN_RE = re.compile(r'<parameter=([A-Za-z_][\w]*)>', re.IGNORECASE)
 # Closer tokens (any tag name) for the backref scanners, pre-indexed by name so a
 # flood of distinct unclosed tag names stays near-linear. See _iter_backref_blocks.
 _XML_DIRECT_CLOSE_ANY_RE = re.compile(r"</\s*([A-Za-z_][\w-]*)\s*>", re.IGNORECASE)
@@ -929,6 +932,73 @@ def _parse_xml_direct_tool(name, body) -> Optional[ToolBlock]:
     return function_call_to_tool_block(mapped, json.dumps(params))
 
 
+def _qwen_xml_value(text, schema):
+    expected_type = schema.get('type', 'string')
+    if expected_type == 'string':
+        return text
+    value = json.loads(text)
+    value_types = {'integer': int, 'number': (int, float), 'boolean': bool, 'array': list, 'object': dict}
+    expected_class = value_types.get(expected_type) if isinstance(expected_type, str) else None
+    if expected_class is None or not isinstance(value, expected_class):
+        raise ValueError('Invalid Qwen XML parameter type')
+    if expected_type in {'integer', 'number'} and isinstance(value, bool):
+        raise ValueError('Boolean supplied for a numeric parameter')
+    return value
+
+
+def _parse_qwen_xml_calls(body):
+    from src.tool_schemas import FUNCTION_TOOL_SCHEMAS, function_call_to_tool_block
+
+    schemas = {schema['function']['name']: schema['function']['parameters'] for schema in FUNCTION_TOOL_SCHEMAS}
+    blocks = []
+    position = 0
+    while position < len(body):
+        while position < len(body) and body[position].isspace():
+            position += 1
+        if position == len(body):
+            break
+        opening = _QWEN_FUNCTION_OPEN_RE.match(body, position)
+        if opening is None:
+            return []
+        closing = _QWEN_FUNCTION_CLOSE_RE.search(body, opening.end())
+        if closing is None:
+            return []
+        name = opening.group(1).lower()
+        schema = schemas.get(name)
+        if schema is None:
+            return []
+        arguments = {}
+        parameter_position = opening.end()
+        while parameter_position < closing.start():
+            if body[parameter_position].isspace():
+                parameter_position += 1
+                continue
+            parameter = _QWEN_PARAM_OPEN_RE.match(body, parameter_position)
+            if parameter is None:
+                return []
+            parameter_end = _XML_PARAM_CLOSE_RE.search(body, parameter.end(), closing.start())
+            if parameter_end is None:
+                return []
+            key = parameter.group(1)
+            properties = schema.get('properties', {})
+            if key in arguments or key not in properties:
+                return []
+            value = body[parameter.end():parameter_end.start()].strip()
+            try:
+                arguments[key] = _qwen_xml_value(value, properties[key])
+            except (ValueError, TypeError):
+                return []
+            parameter_position = parameter_end.end()
+        if any(key not in arguments for key in schema.get('required', [])):
+            return []
+        block = function_call_to_tool_block(name, json.dumps(arguments))
+        if block is None:
+            return []
+        blocks.append(block)
+        position = closing.end()
+    return blocks
+
+
 def _looks_like_json_body(body: str) -> bool:
     """True when a <tool_call> wrapper body is JSON, not XML markup."""
     return body.lstrip()[:1] in ("{", "[")
@@ -1374,16 +1444,20 @@ def parse_tool_blocks(text: str, skip_fenced: bool = False) -> List[ToolBlock]:
         # parsed as JSON or dropped — never scanned by the XML iterators, so
         # XML-like text inside JSON argument values stays data instead of
         # selecting a different tool.
-        json_body_seen = False
+        structured_body_seen = False
         for _ms, inner_start, inner_end, _me in _iter_delimited(
             text, _XML_TOOL_CALL_OPEN_RE, _XML_TOOL_CALL_CLOSE_RE
         ):
             body = text[inner_start:inner_end]
             if _looks_like_json_body(body):
-                json_body_seen = True
+                structured_body_seen = True
                 block = _parse_json_tool_call_body(body)
                 if block:
                     blocks.append(block)
+                continue
+            if body.lstrip().lower().startswith('<function='):
+                structured_body_seen = True
+                blocks.extend(_parse_qwen_xml_calls(body))
                 continue
             for inv_name, inv_body in _iter_xml_invoke(body):
                 block = _parse_xml_invoke(inv_name, inv_body)
@@ -1401,10 +1475,14 @@ def parse_tool_blocks(text: str, skip_fenced: bool = False) -> List[ToolBlock]:
                 body = m.group(1)
                 if _looks_like_json_body(body):
                     # Same fail-closed rule as above for an unclosed wrapper.
-                    json_body_seen = True
+                    structured_body_seen = True
                     block = _parse_json_tool_call_body(body)
                     if block:
                         blocks.append(block)
+                    break
+                if body.lstrip().lower().startswith('<function='):
+                    structured_body_seen = True
+                    blocks.extend(_parse_qwen_xml_calls(body))
                     break
                 for inv_name, inv_body in _iter_xml_invoke(body):
                     block = _parse_xml_invoke(inv_name, inv_body)
@@ -1420,7 +1498,7 @@ def parse_tool_blocks(text: str, skip_fenced: bool = False) -> List[ToolBlock]:
         # was seen but produced no block: this rescan covers the full text,
         # wrapper bodies included, and <invoke> markup inside a (possibly
         # malformed) JSON payload must stay data rather than dispatch.
-        if not blocks and not json_body_seen:
+        if not blocks and not structured_body_seen:
             for inv_name, inv_body in _iter_xml_invoke(text):
                 block = _parse_xml_invoke(inv_name, inv_body)
                 if block:

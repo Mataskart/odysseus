@@ -31,6 +31,7 @@ from src.context_compactor import (
     maybe_compact,
 )
 from src.settings import get_setting
+from src.tool_loop_guard import RepeatedReadGuard
 from src.tools.openjev import TOOL_GUIDANCE as OPENJEV_TOOL_GUIDANCE
 from src.prompt_security import runtime_note_for_model, untrusted_context_message
 from src.tool_security import (
@@ -4602,6 +4603,7 @@ async def stream_agent_loop(
     # backstop. Counting identical repeats — not distinct same-tool calls —
     # lets a legit batch (e.g. 18 calendar events at once) through.
     _call_freq: collections.Counter = collections.Counter()
+    repeated_read_guard = RepeatedReadGuard()
     _force_answer = False  # set by loop-breaker → next round runs with NO tools
     # Supervisor: how many times we've nudged the model after it announced
     # an action without emitting the tool call. Capped to prevent a model
@@ -6067,6 +6069,7 @@ async def stream_agent_loop(
                             pass
 
             run_security.observe_tool_result(block.tool_type, result, block.content)
+            repeated_read_guard.observe(block.tool_type, block.content, result)
 
             # A skill the model just loaded can prescribe tools that weren't
             # RAG-selected this turn (declared via requires_toolsets in its
@@ -6531,6 +6534,15 @@ async def stream_agent_loop(
                              tool_results, tool_result_texts, used_native, round_num,
                              round_reasoning=round_reasoning,
                              tool_result_records=tool_result_records)
+
+        if repeated_read_guard.stop is not None:
+            final = repeated_read_guard.final_answer(_last_user)
+            full_response += "\n\n" + final
+            yield 'data: ' + json.dumps({
+                "type": "loop_breaker_triggered", "reason": "repeated_failed_read", "round": round_num,
+            }) + "\n\n"
+            yield 'data: ' + json.dumps({"delta": "\n\n" + final}) + "\n\n"
+            break
 
         # Emit agent_step event
         yield (
