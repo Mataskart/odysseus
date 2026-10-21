@@ -75,6 +75,33 @@ def test_latest_user_query_survives_old_conversation_and_huge_tool_arguments():
     assert_complete_tool_exchanges(trimmed)
 
 
+def test_large_current_paste_keeps_fresh_read_arguments_and_evidence():
+    import json
+
+    arguments = json.dumps({"path": "/tmp/shipment-public.txt"})
+    call = {"id": "fresh_read", "type": "function",
+            "function": {"name": "read_file", "arguments": arguments}}
+    result = {"role": "tool", "tool_call_id": "fresh_read", "content": "Shipment reference PK-7319"}
+    messages = [
+        {"role": "system", "content": "Read the source and answer honestly."},
+        {"role": "user", "content": "Unrelated archive. " * 6000 + "\nRead /tmp/shipment-public.txt and report its reference."},
+        {"role": "assistant", "content": None, "tool_calls": [call]},
+        result,
+    ]
+    original = copy.deepcopy(messages)
+
+    trimmed = compactor.trim_for_context(messages, 4096, reserve_tokens=512)
+
+    assert result in trimmed
+    assistant = next(message for message in trimmed if message.get("tool_calls"))
+    assert assistant["tool_calls"][0]["function"]["arguments"] == arguments
+    user = next(message for message in trimmed if message["role"] == "user")
+    assert user["content"].endswith("Read /tmp/shipment-public.txt and report its reference.")
+    assert estimate_tokens(trimmed) <= 3584
+    assert_complete_tool_exchanges(trimmed)
+    assert messages == original
+
+
 def test_protected_context_counted_once_and_preserved():
     protected = {"role": "system", "content": "document " * 200, "_protected": True}
     query = {"role": "user", "content": "CURRENT REQUEST"}

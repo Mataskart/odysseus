@@ -313,17 +313,22 @@ def trim_for_context(messages: List[Dict], context_length: int, reserve_tokens: 
     result = _sanitize_tool_messages(essential_system + protected_msgs + convo_msgs)
     full_budget = context_length - reserve_tokens
     fixed_messages = protected_msgs + _primers
+
+    def shrink_priority(item):
+        message = item[1]
+        size = estimate_tokens([message])
+        preserve_request = message is latest_user and size <= full_budget // 2
+        preserve_persona = message.get("role") == "system"
+        return (preserve_request or preserve_persona, -size)
+
     while estimate_tokens(result) > full_budget:
         overflow = estimate_tokens(result) - full_budget
         candidates = [
             (index, msg) for index, msg in enumerate(result)
             if not any(msg is fixed for fixed in fixed_messages)
         ]
-        # Shrink tool output and prior assistant text before the actual request or persona.
-        candidates.sort(key=lambda item: (
-            item[1] is latest_user or item[1].get("role") == "system",
-            -estimate_tokens([item[1]]),
-        ))
+        # A huge paste must not erase the small tool exchange needed to answer it.
+        candidates.sort(key=shrink_priority)
         for index, msg in candidates:
             size = estimate_tokens([msg])
             smaller = _truncate_message_to_token_budget(msg, max(4, size - overflow))

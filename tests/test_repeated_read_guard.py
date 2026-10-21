@@ -144,6 +144,16 @@ def test_loop_still_reads_corrected_path_and_answers(monkeypatch):
     assert not any(event.get('reason') == 'repeated_failed_read' for event in events)
 
 
+def test_only_requested_source_failure_uses_accurate_first_failure_event(monkeypatch):
+    executed, requests, events = run_loop(
+        monkeypatch, [{'path': '/tmp/report.txt'}], [{'error': 'not found', 'exit_code': 1}],
+        user_text='Read /tmp/report.txt.',
+    )
+    assert len(executed) == len(requests) == 1
+    assert any(event.get('reason') == 'requested_source_unavailable' for event in events)
+    assert not any(event.get('reason') == 'repeated_failed_read' for event in events)
+
+
 def test_loop_does_not_put_a_global_budget_on_distinct_missing_files(monkeypatch):
     calls = [{'path': f'/srv/team/report-{index}'} for index in range(5)]
     executed, requests, events = run_loop(monkeypatch, calls + [None], [{'error': 'not found'}] * 5)

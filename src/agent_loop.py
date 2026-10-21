@@ -4233,6 +4233,8 @@ async def stream_agent_loop(
     _relevant_tools = await select_openjev_tool(
         _relevant_tools, disabled_tools, guide_only, user_text=_last_user or "",
     )
+    if not guide_only and forced_tools and _relevant_tools is not None:
+        _relevant_tools.update(set(forced_tools) - disabled_tools)
     if not guide_only and "find_tools" not in disabled_tools and _relevant_tools is not None:
         _relevant_tools.add("find_tools")
     if _intent.get("pending_objective") and not guide_only:
@@ -4639,7 +4641,10 @@ async def stream_agent_loop(
     # backstop. Counting identical repeats — not distinct same-tool calls —
     # lets a legit batch (e.g. 18 calendar events at once) through.
     _call_freq: collections.Counter = collections.Counter()
-    repeated_read_guard = RepeatedReadGuard()
+    repeated_read_guard = RepeatedReadGuard(
+        user_text=_last_user,
+        read_file_only=(set(_relevant_tools or ()) - disabled_tools == {"read_file"}),
+    )
     _force_answer = False  # set by loop-breaker → next round runs with NO tools
     # Supervisor: how many times we've nudged the model after it announced
     # an action without emitting the tool call. Capped to prevent a model
@@ -6552,10 +6557,17 @@ async def stream_agent_loop(
             final = repeated_read_guard.final_answer(_last_user)
             full_response += "\n\n" + final
             yield 'data: ' + json.dumps({
-                "type": "loop_breaker_triggered", "reason": "repeated_failed_read", "round": round_num,
+                "type": "loop_breaker_triggered",
+                "reason": "requested_source_unavailable" if repeated_read_guard.requested_source_failed else "repeated_failed_read",
+                "message": "The requested source is unavailable." if repeated_read_guard.requested_source_failed else "Repeated read/search failure.",
+                "round": round_num,
             }) + "\n\n"
             yield 'data: ' + json.dumps({"delta": "\n\n" + final}) + "\n\n"
             break
+
+        retry_notice = repeated_read_guard.take_retry_notice()
+        if retry_notice:
+            _prepend_agent_directive(messages, retry_notice)
 
         # Emit agent_step event
         yield (
