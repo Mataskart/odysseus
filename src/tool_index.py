@@ -33,6 +33,7 @@ logger = logging.getLogger(__name__)
 # keyword intent so a trivial agent prompt like "test" does not carry every
 # domain's schemas and rules.
 ALWAYS_AVAILABLE = frozenset({
+    "find_tools",
     # Memory is ambient — "remember this" can follow any message regardless
     # of topic. Without this, RAG drops it and the agent falls back to
     # app_api /api/memory/add which fails with 422 on first attempt.
@@ -67,6 +68,8 @@ COLLECTION_NAME = "odysseus_tool_index"
 # Each tool gets a searchable description that helps retrieval.
 # These are richer than the system prompt one-liners — they're for embedding.
 BUILTIN_TOOL_DESCRIPTIONS: Dict[str, str] = {
+    "search_knowledge": "Search the contents of indexed personal/shared documents, Moodle course materials, uploaded study sources, lecture notes and knowledge base. Retrieve source passages with filenames for grounded citations. Lithuanian: Moodle medžiaga, paskaitų konspektai, mokymosi šaltiniai, dokumentų turinio paieška.",
+    "find_tools": "Discover additional permitted tools by describing the capability needed; load matching tools for the next round.",
     "openjev_judge": "Focused local lookski/OpenJev judgment on short supplied evidence. Semantic counting (how many, count, kiek, suskaičiuok); optional presence/status classification and explicit rubric scoring. choice criteria: JSON object with 2..26 named options, never an array; score: 2..10 ordered descriptions; noul: P(Yes). No search or reasoning trace. Avoid arithmetic, character counting, unsupported facts, temporal/conflicting evidence and permission decisions. RAG reranking unvalidated. Scores are uncalibrated label preferences, not correctness probabilities.",
     "bash": "Run shell commands on the server. Install packages, git operations, builds, system info, process management. Prefer a dedicated tool whenever one fits the job (file read/write/edit, search, listing); use bash only for what no dedicated tool covers. Do not use for web lookup/search; use web_search or web_fetch when web tools are available.",
     "python": "Execute Python code for computation, data processing, math, scripting, and parsing. Not for writing code for the user. Prefer a dedicated tool for reading, writing, or searching files; use python only for what no dedicated tool covers. Do not use for web lookup/search; use web_search or web_fetch when web tools are available.",
@@ -347,6 +350,9 @@ class ToolIndex:
 
     # Keyword hints: if the query mentions these words, force-include the tools.
     _KEYWORD_HINTS = {
+        frozenset({"moodle", "course material", "course materials", "indexed documents",
+                   "knowledge base", "lecture notes", "retrieved sources", "study sources",
+                   "paskaitų", "konspektai", "mokymosi medžiaga"}): {"search_knowledge"},
         # NOTE: "tell" was removed from this set. It fired on any "tell me ..."
         # request (e.g. "visit <url> and tell me the title"), force-including the
         # whole email toolset and crowding out the relevant tools — the model then
@@ -516,6 +522,15 @@ class ToolIndex:
             {"create_document", "edit_document", "update_document"},
     }
 
+    @classmethod
+    def keyword_tools_for_query(cls, query: str) -> List[str]:
+        names = []
+        query_lower = query.lower()
+        for keywords, tools in cls._KEYWORD_HINTS.items():
+            if any(re.search(rf"\b{re.escape(keyword)}\b", query_lower) for keyword in keywords):
+                names.extend(sorted(tools))
+        return list(dict.fromkeys(names))
+
     def get_tools_for_query(
         self, query: str, k: int = 8, always_include: Optional[Set[str]] = None
     ) -> Set[str]:
@@ -529,9 +544,7 @@ class ToolIndex:
         # ("prefix", "deadline"/"online", "observe"/"reserve", "replying",
         # "unreadable"). Same word-boundary matching used in topic_analyzer.
         ql = query.lower()
-        for keywords, tools in self._KEYWORD_HINTS.items():
-            if any(re.search(rf"\b{re.escape(kw)}\b", ql) for kw in keywords):
-                base.update(tools)
+        base.update(self.keyword_tools_for_query(query))
         # Structural scheduling-intent detection — typo-resilient (the literal
         # keyword "every day" misses "every dya"). Catches "every <word>",
         # daily/nightly/etc., or a clock time like "at 7:30 am" / "7am", which

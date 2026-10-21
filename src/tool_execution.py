@@ -1114,6 +1114,10 @@ async def _execute_tool_block_impl(
         first_line = content.split(chr(10))[0][:80]
         desc = f"{tool}: {first_line}"
         result = await _call_mcp_tool(tool, content, progress_cb=progress_cb)
+    elif tool == "search_knowledge":
+        from src.tools.knowledge import search_knowledge
+        desc = "search_knowledge"
+        result = await search_knowledge(content, owner=owner)
     elif tool in ("grep", "glob", "ls", "get_workspace"):
         # Code-navigation tools — no MCP server; run the direct implementation.
         first_line = content.split(chr(10))[0][:80]

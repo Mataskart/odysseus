@@ -1,5 +1,6 @@
 """History routes — session history, truncation, fork, conversation topics."""
 
+import asyncio
 import json
 import uuid
 import logging
@@ -135,6 +136,9 @@ def setup_history_routes(session_manager, upload_handler=None) -> APIRouter:
                 meta = json.loads(m.meta_data) or {}
             except (json.JSONDecodeError, ValueError):
                 meta = {}
+        if not isinstance(meta, dict):
+            meta = {}
+        meta["_db_id"] = m.id
         if m.timestamp and "timestamp" not in meta:
             meta["timestamp"] = m.timestamp.isoformat() + "Z"
         if meta:
@@ -855,11 +859,33 @@ def setup_history_routes(session_manager, upload_handler=None) -> APIRouter:
             body = {}
         if not isinstance(body, dict):
             body = {}
-        from src.turn_log import record_flag
-        recorded = record_flag(
-            session_id=str(body.get("session_id") or ""),
-            message_id=str(body.get("message_id") or ""),
+        session_id = body.get("session_id")
+        message_id = body.get("message_id")
+        if not isinstance(session_id, str) or not session_id or not isinstance(message_id, str) or not message_id:
+            raise HTTPException(400, "session_id and message_id are required")
+        _verify_session_owner(request, session_id)
+        db = SessionLocal()
+        try:
+            message = db.query(DbChatMessage).filter(
+                DbChatMessage.id == message_id,
+                DbChatMessage.session_id == session_id,
+                DbChatMessage.role == "assistant",
+            ).first()
+            if message is None:
+                raise HTTPException(404, "Assistant reply not found in this session")
+            try:
+                metadata = json.loads(message.meta_data or "{}")
+            except (ValueError, TypeError):
+                metadata = {}
+            turn_id = metadata.get("turn_id") if isinstance(metadata, dict) else None
+        finally:
+            db.close()
+        from src.turn_log import record_flag, logging_enabled
+        if not logging_enabled():
+            return {"ok": False, "recorded": False, "status": "logging_disabled"}
+        recorded = await asyncio.to_thread(
+            record_flag, session_id=session_id, message_id=message_id, turn_id=turn_id,
         )
-        return {"ok": True, "recorded": recorded}
+        return {"ok": recorded, "recorded": recorded, "status": "saved" if recorded else "write_failed"}
 
     return router

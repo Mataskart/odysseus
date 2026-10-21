@@ -1766,8 +1766,12 @@ export function createMsgFooter(msgElement) {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ session_id: sessionId, message_id: messageId }),
-      }).then((res) => {
-        btn.textContent = res.ok ? '\u2713' : '!';
+      }).then(async (res) => {
+        const result = await res.json();
+        const saved = res.ok && result.recorded === true && result.status === 'saved';
+        btn.textContent = saved ? '\u2713' : '!';
+        btn.title = saved ? 'Saved local review flag' : result.status === 'logging_disabled'
+          ? 'Turn logging is disabled; flag was not saved' : 'Flag could not be saved';
       }).catch(() => {
         btn.textContent = '!';
       });

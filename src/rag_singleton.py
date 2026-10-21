@@ -4,6 +4,7 @@ RAG singleton instance for the application.
 import os
 import logging
 import time
+import threading
 from pathlib import Path
 
 from src.constants import RAG_DIR
@@ -12,11 +13,17 @@ from src.runtime_paths import get_app_root
 logger = logging.getLogger(__name__)
 
 rag_instance = None
+_init_lock = threading.Lock()
 _last_attempt = 0.0
 _RETRY_INTERVAL = 30  # seconds between re-init attempts
 
 
 def get_rag_manager():
+    with _init_lock:
+        return _initialize_rag_manager()
+
+
+def _initialize_rag_manager():
     """Lazy ChromaDB-backed VectorRAG initializer.
 
     Returns the VectorRAG instance on first successful init, None if ChromaDB

@@ -78,7 +78,7 @@ SHELL_TIMEOUT = 60
 PYTHON_TIMEOUT = 30
 
 # Tool types that trigger execution
-TOOL_TAGS = {"bash", "python", "web_search", "web_fetch", "read_file", "write_file", "edit_file",
+TOOL_TAGS = {"find_tools", "search_knowledge", "bash", "python", "web_search", "web_fetch", "read_file", "write_file", "edit_file",
              "openjev_judge",
              "apply_patch", "todowrite",
              "grep", "glob", "ls", "get_workspace", "manage_bg_jobs",

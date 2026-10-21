@@ -1528,6 +1528,8 @@ def setup_chat_routes(
 
         # Build disabled-tools set from frontend toggles + user privileges
         disabled_tools = set()
+        if str(use_rag).lower() == "false":
+            disabled_tools.add("search_knowledge")
         # Minting is admin-only, so every owner-keyed check below answers
         # "admin" for a token. Cap it at the non-admin policy instead.
         # stream_agent_loop repeats this from delegated_credential.
@@ -2435,6 +2437,7 @@ def setup_chat_routes(
                         active_email=active_email_ctx,
                         session_id=session,
                         log_turns=not incognito,
+                        retrieval_status=next((m.get("_retrieval_diagnostics") for m in getattr(ctx, "preface", []) if m.get("_retrieval_diagnostics")), {}),
                         history_session=sess,
                         disabled_tools=disabled_tools if disabled_tools else None,
                         tool_policy=tool_policy,

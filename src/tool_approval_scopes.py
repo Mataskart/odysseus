@@ -66,6 +66,9 @@ def sign_chat_session_grant(
 # read back as authority: ``tool_events`` carries the approval cards, and the
 # context marker is projected onto a turn once a grant is found.
 _SERVER_OWNED_METADATA_KEYS = (
+    "turn_id",
+    "_db_id",
+    "pending_objective",
     "tool_events",
     CHAT_SESSION_APPROVAL_CONTEXT_MARKER,
 )

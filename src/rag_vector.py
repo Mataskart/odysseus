@@ -30,6 +30,23 @@ from src.embedding_lanes import (
 
 logger = logging.getLogger(__name__)
 
+
+def _document_sharing_metadata(metadata: Dict[str, Any]) -> Dict[str, Any]:
+    from src.settings import get_setting
+
+    source = metadata.get("source")
+    if not isinstance(source, str) or not os.path.isabs(source):
+        return metadata
+    roots = get_setting("shared_rag_directories", [])
+    if not isinstance(roots, list):
+        return metadata
+    source_path = Path(source).resolve()
+    for root in roots:
+        if isinstance(root, str) and os.path.isabs(root):
+            if source_path.is_relative_to(Path(root).resolve()):
+                return {**metadata, "visibility": "shared"}
+    return metadata
+
 DEFAULT_FILE_EXTENSIONS: Set[str] = {
     '.txt', '.md', '.py', '.json', '.yaml', '.yml',
     '.csv', '.html', '.css', '.js', '.pdf', '.docx'
@@ -188,6 +205,7 @@ class VectorRAG:
         if not metadata or not isinstance(metadata, dict):
             return False
 
+        metadata = _document_sharing_metadata(metadata)
         doc_id = _generate_doc_id(text, metadata.get("owner") or "")
         wrote = False
         for lane in self._lanes:
@@ -214,7 +232,7 @@ class VectorRAG:
             return {"success": False, "message": "Empty document list"}
 
         valid = [
-            (t, m) for t, m in docs
+            (t, _document_sharing_metadata(m)) for t, m in docs
             if t and isinstance(t, str) and m and isinstance(m, dict)
         ]
         if not valid:
@@ -345,16 +363,19 @@ class VectorRAG:
     # Search — hybrid: vector similarity + keyword overlap
     # ------------------------------------------------------------------
 
-    def search(self, query: str, k: int = 5, owner: Optional[str] = None) -> List[Dict[str, Any]]:
+    def search(self, query: str, k: int = 5, owner: Optional[str] = None, *, raise_on_error: bool = False) -> List[Dict[str, Any]]:
         if not self.healthy:
+            if raise_on_error:
+                raise RuntimeError("Indexed document search is unavailable")
             return []
         if not query or not isinstance(query, str):
             return []
-        if lane_count(self._lanes) == 0:
+        document_count = sum(lane.collection.count() for lane in self._lanes) if raise_on_error else lane_count(self._lanes)
+        if document_count == 0:
             return []
 
         try:
-            where_filter = {"owner": owner} if owner else None
+            where_filter = {"$or": [{"owner": owner}, {"visibility": "shared"}]} if owner else None
             query_words = set(query.lower().split())
             candidates = []
 
@@ -400,9 +421,9 @@ class VectorRAG:
 
         except Exception as e:
             logger.error(f"search failed: {e}")
-            return self._keyword_search_fallback(query, k, owner=owner)
+            return self._keyword_search_fallback(query, k, owner=owner, raise_on_error=raise_on_error)
 
-    def _keyword_search_fallback(self, query: str, k: int = 5, owner: Optional[str] = None) -> List[Dict[str, Any]]:
+    def _keyword_search_fallback(self, query: str, k: int = 5, owner: Optional[str] = None, *, raise_on_error: bool = False) -> List[Dict[str, Any]]:
         try:
             if not self._active_collections():
                 return []
@@ -417,7 +438,7 @@ class VectorRAG:
                     continue
                 for i, doc in enumerate(all_docs["documents"]):
                     meta = all_docs["metadatas"][i]
-                    if owner and meta.get("owner") != owner:
+                    if owner and meta.get("owner") != owner and meta.get("visibility") != "shared":
                         continue
                     doc_lower = doc.lower()
                     score = sum(1 for w in query_words if w in doc_lower)
@@ -436,6 +457,8 @@ class VectorRAG:
             return dedupe_results(scored, limit=k)
         except Exception as e:
             logger.error(f"keyword fallback failed: {e}")
+            if raise_on_error:
+                raise
             return []
 
     # ------------------------------------------------------------------

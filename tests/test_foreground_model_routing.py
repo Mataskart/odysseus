@@ -2864,7 +2864,7 @@ def test_toolless_multi_round_agent_persists_round_route_provenance(monkeypatch)
     metrics = json.loads(next(
         chunk for chunk in chunks if '"type": "metrics"' in chunk
     )[6:])["data"]
-    assert metrics["round_texts"] == ["Let me check that now", "final answer"]
+    assert metrics["round_texts"] == ["", "final answer"]
     assert metrics["round_models"] == ["selected-model", "backup-model"]
     assert metrics["round_endpoint_ids"] == ["selected-ep", "backup-ep"]
     assert metrics["endpoint_id"] == "backup-ep"
@@ -3636,14 +3636,14 @@ def test_skill_activation_reaches_later_fallback_request_and_pinned_round(monkey
     assert "grep" in primary_schema_names
     assert round_two_requests[1]["kwargs"]["tools"] is None
     assert any(
-        "route=odysseus-qwen-backup; tools=grep,manage_skills" in (message.get("content") or "")
+        "route=odysseus-qwen-backup; tools=find_tools,grep,manage_skills" in (message.get("content") or "")
         for message in round_two_requests[1]["messages"]
     )
 
     round_three_candidates, round_three_requests = requests_by_round[2]
     assert round_three_candidates == [backup]
     assert any(
-        "route=odysseus-qwen-backup; tools=grep,manage_skills" in (message.get("content") or "")
+        "route=odysseus-qwen-backup; tools=find_tools,grep,manage_skills" in (message.get("content") or "")
         for message in round_three_requests[0]["messages"]
     )
     assert any('"delta": "pinned backup answer"' in chunk for chunk in chunks)

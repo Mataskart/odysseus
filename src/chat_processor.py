@@ -333,6 +333,15 @@ class ChatProcessor:
         preface = []
         rag_sources = []
 
+        planning_texts = [message] + [
+            item.get("content", "") if isinstance(item, dict) else item.content
+            for item in (getattr(session, "history", None) or [])[-16:]
+            if (item.get("role") if isinstance(item, dict) else item.role) == "user"
+        ]
+        if any(isinstance(text, str) and re.search(r"\b(?:schedule|study plan|planning|plan|timetable|tvarkarast\w*|planuok\w*)\b", text, re.IGNORECASE) for text in planning_texts):
+            from src.planning_validation import PLANNING_GUIDANCE
+            preface.append({"role": "system", "content": PLANNING_GUIDANCE})
+
         # Add preset system prompt if specified
         if preset_system_prompt:
             preface.append({
@@ -402,36 +411,52 @@ class ChatProcessor:
             # (skills index injection moved out — see below; only fires in
             # agent mode so chat mode and incognito stay clean.)
 
-        # RAG: search if enabled and rag_manager available, inject only above threshold
+        retrieval = {"enabled": bool(use_rag), "outcome": "disabled", "result_count": 0,
+                     "relevant_count": 0, "threshold": self.RAG_SIMILARITY_THRESHOLD}
         if use_rag:
+            retrieval["outcome"] = "unavailable"
             try:
-                rag_manager = getattr(self.personal_docs_manager, 'rag_manager', None)
-                if rag_manager:
-                    results = rag_manager.search(message, k=5, owner=owner)
-                    # Filter by similarity threshold
+                from src.rag_singleton import get_rag_manager
+                rag_manager = get_rag_manager() if owner else None
+                if rag_manager is not None and owner:
+                    from src.pending_action import pending_document_objective
+                    history = [
+                        item if isinstance(item, dict) else {"role": item.role, "content": item.content, "metadata": getattr(item, "metadata", None)}
+                        for item in (getattr(session, "history", None) or [])
+                    ]
+                    query = pending_document_objective(history, message) or message
+                    results = rag_manager.search(query, k=5, owner=owner, raise_on_error=True)
                     relevant = [r for r in results if r.get("similarity", 0) >= self.RAG_SIMILARITY_THRESHOLD]
+                    retrieval.update(result_count=len(results), relevant_count=len(relevant))
+                    retrieval["outcome"] = "retrieved" if relevant else "below_threshold" if results else "no_matches"
+                    rag_sources = [
+                        {"filename": (r.get("metadata") or {}).get("filename", (r.get("metadata") or {}).get("source", "unknown")),
+                         "snippet": r["document"][:200], "similarity": round(r.get("similarity", 0), 3)}
+                        for r in relevant
+                    ]
                     if relevant:
-                        logger.info(f"RAG: {len(relevant)}/{len(results)} results above threshold {self.RAG_SIMILARITY_THRESHOLD}")
-                        rag_sources = [
-                            {
-                                "filename": r["metadata"].get("filename", r["metadata"].get("source", "unknown")),
-                                "snippet": r["document"][:200],
-                                "similarity": round(r.get("similarity", 0), 3)
-                            }
-                            for r in relevant
-                        ]
                         rag_content = "Relevant documents:\n\n" + "\n\n---\n\n".join(
-                            f"[{s['filename']}]\n{r['document']}" for s, r in zip(rag_sources, relevant)
+                            f"[{source['filename']}]\n{result['document']}"
+                            for source, result in zip(rag_sources, relevant)
                         )
-                        if len(rag_content) > 10000:
-                            rag_content = rag_content[:10000] + "\n[Truncated]"
                         preface.append(untrusted_context_message(
-                            "retrieved documents",
-                            rag_content,
-                            arm_tool_gate=False,
+                            "retrieved documents", rag_content[:10000], arm_tool_gate=False,
                         ))
-            except Exception as e:
-                logger.warning(f"RAG retrieval failed: {e}")
+            except Exception:
+                logger.warning("RAG retrieval failed", exc_info=True)
+        logger.info("Chat retrieval: %s", retrieval)
+        preface.append({
+            "role": "user", "_agent_injected": "retrieval_status", "_retrieval_diagnostics": retrieval,
+            "content": "Indexed document retrieval status: " + retrieval["outcome"] + ".",
+        })
+        preface.append({
+            "role": "system",
+            "content": (
+                "Do not invent source facts or imply a search is ongoing. If the task needs indexed sources "
+                "and retrieval is unavailable, explicitly report that limitation. Disabled retrieval must "
+                "remain disabled. Retrieved top-k passages do not establish exhaustive source coverage."
+            ),
+        })
 
         # Add web search if enabled
         web_sources = []

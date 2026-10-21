@@ -69,6 +69,12 @@ def _register(
         _REGISTRY[name] = capabilities
 
 
+# find_tools lists server-built tool names and descriptions; arming the gate on
+# it would block every tool it just discovered. Knowledge search reads the
+# owner's own notes, which like local files do not arm the gate.
+_register({"find_tools"}, ToolEffect.READ_PUBLIC)
+_register({"search_knowledge"}, ToolEffect.READ_PRIVATE, result_integrity=ResultIntegrity.WORKSPACE_UNTRUSTED)
+
 _register(
     {"ask_user", "update_plan"},
     ToolEffect.USER_INTERACTION,

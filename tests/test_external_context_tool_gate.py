@@ -1473,3 +1473,11 @@ def test_authorized_document_stream_precedes_completed_update(monkeypatch):
     assert event_types.index("doc_stream_open") < event_types.index("doc_update")
     assert event_types.index("doc_stream_delta") < event_types.index("doc_update")
     assert event_types.index("doc_update") < event_types.index("tool_output")
+
+
+def test_tool_discovery_and_owner_knowledge_do_not_arm_gate():
+    from src.tool_capabilities import tool_result_should_arm_gate
+
+    assert not tool_result_should_arm_gate("find_tools", {"success": True, "output": "bash: run a shell command"})
+    assert not tool_result_should_arm_gate("search_knowledge", {"success": True, "output": "lecture note"})
+    assert tool_result_should_arm_gate("web_search", {"success": True, "output": "page text"})

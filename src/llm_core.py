@@ -2695,6 +2695,15 @@ async def _stream_llm_inner(url: str, model: str, messages: List[Dict], temperat
             from src.copilot import apply_request_headers
             apply_request_headers(h, messages_copy)
 
+    sampling_keys = ("temperature", "top_p", "top_k", "min_p", "presence_penalty", "frequency_penalty", "max_tokens", "max_completion_tokens", "num_predict")
+    sampling_payload = payload.get("options", payload)
+    sampling_event = "data: " + json.dumps({"type": "sampling", "data": {
+        "model": model,
+        "sent": {key: sampling_payload[key] for key in sampling_keys if key in sampling_payload},
+        "unspecified": "backend defaults",
+    }}) + "\n\n"
+    sampling_announced = False
+
     # Connect budget from LLMConfig.CONNECT_TIMEOUT (env LLM_CONNECT_TIMEOUT).
     # The dead-host cooldown still bounds a genuinely unreachable upstream, so a
     # wider connect budget only affects first contact and stops a brief cold
@@ -3209,6 +3218,9 @@ async def _stream_llm_inner(url: str, model: str, messages: List[Dict], temperat
                                     or _delta0.get("thinking")
                                     or _delta0.get("tool_calls")
                                 )
+                                if _delta_has_output and not sampling_announced:
+                                    sampling_announced = True
+                                    yield sampling_event
                                 u = j.get("usage")
                                 _has_genuine_usage = (
                                     isinstance(u, dict)

@@ -684,7 +684,13 @@ async def build_chat_context(
         if continuation_context_message
         else message
     )
-    casual_low_signal = _is_casual_low_signal(context_message)
+    from src.pending_action import pending_document_objective
+    task_history = [
+        item if isinstance(item, dict) else {"role": item.role, "content": item.content, "metadata": getattr(item, "metadata", None)}
+        for item in (getattr(sess, "history", None) or [])
+    ]
+    pending_objective = pending_document_objective(task_history, context_message)
+    casual_low_signal = _is_casual_low_signal(context_message) and not pending_objective
 
     # Memory enabled?
     mem_enabled = not incognito and not no_memory and uprefs.get("memory_enabled", True)

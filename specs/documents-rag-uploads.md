@@ -156,6 +156,8 @@ Some non-route tool/script paths can index ownerless or arbitrary directories an
 
 `src.rag_manager.RAGManager` is a backward-compat wrapper. The live owner-aware vector path is `VectorRAG`.
 
+`shared_rag_directories` in the server settings identifies directories whose newly indexed chunks receive `visibility: shared`. Paths are resolved before containment checks, so sibling prefixes and symlinks pointing outside a shared directory do not inherit sharing. Existing chunks need an explicit metadata update when enabling sharing. Vector search and keyword fallback include shared chunks alongside the requesting owner's private chunks; ownerless chunks remain excluded from owner-scoped searches. Sharing document retrieval does not grant source-file download or filesystem access, and does not affect memory ownership.
+
 `services/docs/service.py` is a separate facade. It accepts live `VectorRAG` query rows (`document`, `similarity`, nested metadata source), retains legacy `text`/`content` and `score` fallbacks, skips non-object rows, and maps live `indexed_count`/`failed_count` plus legacy `indexed`/`failed` index summaries into its dataclasses.
 
 `src.database` re-exports `core.database`; document models and migrations live in `core.database`.

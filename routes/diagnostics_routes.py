@@ -1,5 +1,6 @@
 """Diagnostics routes — /api/db/stats, /api/rag/stats, /api/test/youtube, /api/test-research."""
 
+import asyncio
 import logging
 import os
 from typing import Dict, Any
@@ -27,7 +28,8 @@ def setup_diagnostics_routes(
         ntfy, and provider endpoints. Non-intrusive probes — safe to poll."""
         require_admin(request)
         from src.service_health import collect_service_health
-        return await collect_service_health(rag_manager, memory_vector)
+        from src.rag_singleton import get_rag_manager
+        return await collect_service_health(await asyncio.to_thread(get_rag_manager), memory_vector)
 
     @router.get("/api/diagnostics/logs")
     async def get_diagnostics_logs(request: Request, limit: int = 200) -> Dict[str, Any]:
@@ -66,8 +68,10 @@ def setup_diagnostics_routes(
     @router.get("/api/rag/stats")
     async def get_rag_stats(request: Request) -> Dict[str, Any]:
         require_admin(request)
-        if rag_available and rag_manager:
-            return rag_manager.get_stats()
+        from src.rag_singleton import get_rag_manager
+        current_manager = await asyncio.to_thread(get_rag_manager)
+        if current_manager:
+            return current_manager.get_stats()
         return {"error": "RAG system not available"}
 
     @router.get("/api/test/youtube")

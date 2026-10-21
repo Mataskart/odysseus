@@ -33,6 +33,7 @@ def _client_with_admin_gate(monkeypatch, gate):
     # would leak the fakes into every later test in the session.
     monkeypatch.setattr(diag, "require_admin", gate)
     monkeypatch.setattr(sh, "collect_service_health", _fake_collect)
+    monkeypatch.setattr("src.rag_singleton.get_rag_manager", lambda: None)
 
     app = FastAPI()
     app.include_router(diag.setup_diagnostics_routes(

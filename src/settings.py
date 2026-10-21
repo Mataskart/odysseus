@@ -36,6 +36,7 @@ def _invalidate_caches():
 # ── Default values ──
 
 DEFAULT_SETTINGS = {
+    "shared_rag_directories": [],
     "openjev_enabled": False,
     "openjev_url": "",
     "openjev_model": "Qwen/Qwen3.5-4B",

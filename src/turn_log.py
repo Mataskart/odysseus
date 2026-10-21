@@ -46,15 +46,19 @@ def _clip(value) -> str:
     return value[:_MAX_TEXT] + "\n[truncated]"
 
 
-def _write(directory: Path, filename: str, record: dict) -> None:
+def _write(directory: Path, filename: str, record: dict) -> bool:
     try:
         directory.mkdir(parents=True, exist_ok=True)
         # Turns hold prompts, memories and documents, so only the owner may read them.
         fd = os.open(directory / filename, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
         with os.fdopen(fd, "a", encoding="utf-8") as handle:
             handle.write(json.dumps(record, ensure_ascii=False, default=str) + "\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        return True
     except OSError as error:
         logger.warning("Turn log write to %s failed: %s", directory, error)
+        return False
 
 
 def _append(filename: str, record: dict) -> None:
@@ -71,6 +75,8 @@ def record_turn(
     tool_events,
     offered_tools,
     rounds=None,
+    turn_id=None,
+    diagnostics=None,
 ) -> None:
     if not logging_enabled():
         return
@@ -96,6 +102,8 @@ def record_turn(
     _append("turns.jsonl", {
         "at": datetime.now(timezone.utc).isoformat(),
         "kind": kind,
+        "turn_id": turn_id,
+        "diagnostics": diagnostics or {},
         "session_id": session_id,
         "model": model,
         "offered_tools": list(offered_tools or []),
@@ -113,12 +121,12 @@ def record_turn(
     })
 
 
-def record_flag(*, session_id: str, message_id: str) -> bool:
+def record_flag(*, session_id: str, message_id: str, turn_id=None) -> bool:
     if not logging_enabled():
         return False
-    _append("flags.jsonl", {
+    return _write(log_directory(), "flags.jsonl", {
         "at": datetime.now(timezone.utc).isoformat(),
         "session_id": (session_id or "")[:_MAX_ID],
         "message_id": (message_id or "")[:_MAX_ID],
+        "turn_id": turn_id,
     })
-    return True

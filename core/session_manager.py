@@ -270,6 +270,8 @@ class SessionManager:
             if message.metadata is None:
                 message.metadata = {}
             message.metadata.setdefault('timestamp', _message_timestamp_iso(msg_time))
+            if message.role == 'assistant':
+                message.metadata.setdefault('turn_id', str(uuid.uuid4()))
             # Multimodal content may contain provider data URLs for the live
             # model call. Persist only readable text plus attachment references
             # so chat_messages/FTS do not duplicate upload bytes.
@@ -300,6 +302,21 @@ class SessionManager:
             # Store DB ID on the in-memory message for edit/delete by ID
             message.metadata['_db_id'] = msg_id
 
+            if message.role == "assistant":
+                from src.turn_log import record_turn
+                record_turn(
+                    kind="persisted_reply", session_id=session_id,
+                    turn_id=message.metadata["turn_id"], model=message.metadata.get("model", ""),
+                    messages=[], response=_content, tool_events=message.metadata.get("tool_events", []),
+                    offered_tools=[], diagnostics={
+                        "message_id": msg_id,
+                        "requested_model": message.metadata.get("requested_model"),
+                        "actual_model": message.metadata.get("model"),
+                        "sampling": message.metadata.get("effective_sampling"),
+                        "retrieval": message.metadata.get("retrieval"),
+                        "cancelled": message.metadata.get("stopped", False),
+                    },
+                )
             logger.debug(f"Persisted message to session {session_id}")
 
         except Exception as e:

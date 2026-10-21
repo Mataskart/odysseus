@@ -169,3 +169,33 @@ def test_null_arguments_delta_does_not_drop_sibling_calls(monkeypatch):
     events = _drive(monkeypatch, lines, model="gpt-4o-test")
     calls = next(e["calls"] for e in events if e.get("type") == "tool_calls")
     assert sorted(c["name"] for c in calls) == ["first", "second"], calls
+
+
+def test_sampling_diagnostic_matches_actual_payload_without_changing_gguf_temperature(monkeypatch):
+    captured = {}
+
+    class Client(_FakeClient):
+        def stream(self, method, url, **kwargs):
+            captured.update(kwargs["json"])
+            return super().stream(method, url, **kwargs)
+
+    lines = ['data: ' + json.dumps({"model": "actual-v2.gguf", "choices": [{"delta": {"content": "answer"}, "finish_reason": "stop"}]}), 'data: [DONE]']
+    monkeypatch.setattr(llm_core, "_get_http_client", lambda: Client(lines))
+    monkeypatch.setattr(llm_core, "_is_host_dead", lambda url: False)
+    monkeypatch.setattr(llm_core, "note_model_activity", lambda *a, **k: None)
+
+    async def run():
+        return [chunk async for chunk in llm_core.stream_llm(
+            "http://127.0.0.1:8000/v1", "/models/Qwen3.8-35B-A3B-Odysseus-v2-imatrix-Q4_K_M.gguf",
+            [{"role": "user", "content": "hi"}], temperature=1.0, max_tokens=0,
+        )]
+
+    events = [json.loads(chunk[6:]) for chunk in asyncio.run(run()) if chunk.startswith("data: ") and not chunk.startswith("data: [DONE]")]
+    sampling = next(event["data"] for event in events if event.get("type") == "sampling")
+    assert sampling["sent"]["temperature"] == captured["temperature"] == 1.0
+    assert sampling["unspecified"] == "backend defaults"
+    assert "top_p" not in sampling["sent"]
+    assert "max_tokens" not in sampling["sent"]
+    actual = next(event for event in events if event.get("type") == "model_actual")
+    assert actual["model"] == "actual-v2.gguf"
+    assert actual["requested_model"] == captured["model"]

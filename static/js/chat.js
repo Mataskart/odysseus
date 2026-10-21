@@ -2317,11 +2317,6 @@ import { loadPanel } from './panels.js';
         uiModule.scrollHistory();
       }
 
-      function _replaceThinkingSpinner(label) {
-        _removeThinkingSpinner();
-        _showThinkingSpinner(label);
-      }
-
       // Auto-show thinking spinner after text stops streaming
       let _textPauseTimer = null;
       function _scheduleThinkingSpinner() {
@@ -2892,7 +2887,12 @@ import { loadPanel } from './panels.js';
               if (json.type === 'agent_prep') {
                 if (!_isBg) {
                   _cancelThinkingTimer();
-                  _replaceThinkingSpinner('Tool selection complete · waiting for model');
+                  _removeThinkingSpinner();
+                  if (spinner && spinner.element) {
+                    spinner.updateMessage('Tool selection complete · waiting for model');
+                  } else {
+                    _showThinkingSpinner('Tool selection complete · waiting for model');
+                  }
                   scheduleFirstTokenWaitMessages('model');
                 }
                 continue;
@@ -3512,6 +3512,7 @@ import { loadPanel } from './panels.js';
                 // can be edited/deleted immediately, without reloading the chat.
                 if (_isBg) continue;
                 if (holder && json.id) holder.dataset.dbId = json.id;
+                if (roundHolder && json.id) roundHolder.dataset.dbId = json.id;
 
               } else if (json.type === 'tool_start') {
                 _closeOpenThinkingMarkup(_isBg);
@@ -4208,6 +4209,7 @@ import { loadPanel } from './panels.js';
 
         // Attach footer to the last visible bubble (roundHolder for multi-round agent, holder for single)
         const footerTarget = (roundHolder && roundHolder !== holder && roundHolder.style.display !== 'none') ? roundHolder : holder;
+        if (holder?.dataset.dbId) footerTarget.dataset.dbId = holder.dataset.dbId;
         if (!footerTarget.querySelector('.msg-footer')) {
           footerTarget.appendChild(createMsgFooter(footerTarget));
         }
