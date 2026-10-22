@@ -44,6 +44,8 @@ class RepeatedReadGuard:
         self.empty_searches = []
         self.failed_attempts = 0
         self.retry_notice_sent = False
+        self.empty_discovery_seen = False
+        self.pending_empty_discovery_notice = False
         self.redundant_search = False
         self.requested_source = None
         self.requested_source_failed = False
@@ -64,10 +66,14 @@ class RepeatedReadGuard:
                 self.failed_attempts = 0
                 self.redundant_search = False
                 self.requested_source_failed = False
+                self.pending_empty_discovery_notice = False
             return
         if self.requested_source_failed:
             return
         self.failed_attempts += 1
+        if kind == "empty" and tool_name == "find_tools" and not self.empty_discovery_seen:
+            self.empty_discovery_seen = True
+            self.pending_empty_discovery_notice = True
         content = (content or "").strip()
         try:
             arguments = json.loads(content)
@@ -122,6 +128,16 @@ class RepeatedReadGuard:
         self.empty_searches.append((scope, pattern, ignore_case))
 
     def take_retry_notice(self):
+        if self.pending_empty_discovery_notice:
+            self.pending_empty_discovery_notice = False
+            return (
+                "Tool discovery returned no matches for this capability. "
+                "Before another call, identify what new evidence it can provide: a user-supplied "
+                "alternative, a corrected term, a broader search, a different source, or a distinct capability. "
+                "Do not merely reword the same capability request or guess more identifiers. "
+                "Continue remaining independent sources and concrete recovery steps. "
+                "If none remains, report the checked limitation; an empty scoped search does not prove global absence."
+            )
         if self.failed_attempts < 3 or self.retry_notice_sent:
             return None
         self.retry_notice_sent = True

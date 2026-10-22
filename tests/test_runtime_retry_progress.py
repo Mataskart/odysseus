@@ -8,6 +8,38 @@ from src.tool_loop_guard import RepeatedReadGuard
 from src.tool_policy import known_tool_names
 
 
+def test_first_empty_discovery_guides_recovery_without_stopping():
+    guard = RepeatedReadGuard()
+    guard.observe("find_tools", '{"query":"unavailable"}', {"discovered_tools": [], "exit_code": 0})
+    notice = guard.take_retry_notice()
+    assert "independent sources" in notice
+    assert "does not prove global absence" in notice
+    assert guard.stop is None
+    assert guard.take_retry_notice() is None
+
+
+def test_distinct_queries_remain_available_after_early_notice():
+    guard = RepeatedReadGuard()
+    for pattern in ["retired", "archived", "superseded"]:
+        empty(guard, pattern)
+        guard.take_retry_notice()
+        assert guard.stop is None
+    guard.observe("grep", '{"pattern":"current"}',
+                  {"output": "record:1:Reference: ZX-8093", "exit_code": 0})
+    assert guard.stop is None
+    assert guard.take_retry_notice() is None
+
+
+def test_success_in_same_batch_clears_pending_empty_notice():
+    guard = RepeatedReadGuard()
+    guard.observe("find_tools", '{"query":"unavailable"}', {"discovered_tools": [], "exit_code": 0})
+    guard.observe("read_file", "/tmp/replacement", {"output": "Reference: ZX-8093", "exit_code": 0})
+    assert guard.take_retry_notice() is None
+    empty(guard, "archived")
+    assert guard.take_retry_notice() is None
+
+
+
 def empty(guard, pattern, **options):
     arguments = {"path": "/tmp/search-scope", "pattern": pattern, **options}
     guard.observe("grep", json.dumps(arguments), {"output": f"No matches for {pattern!r}", "exit_code": 0})

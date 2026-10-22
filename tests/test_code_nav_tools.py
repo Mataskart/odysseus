@@ -70,6 +70,24 @@ def test_grep_no_match(repo):
     assert "No matches" in r["output"]
 
 
+@pytest.mark.parametrize("fallback", [False, True])
+def test_grep_distinguishes_snippets_and_limits_from_full_source(repo, monkeypatch, fallback):
+    if fallback:
+        monkeypatch.setattr(shutil, "which", lambda name: None)
+    with open(os.path.join(repo, "record.txt"), "w") as source:
+        source.write("Reference: ZX-8093\nNote: awaiting dispatch\n")
+    result = _run("grep", f'{{"pattern":"Reference", "path":"{repo}", "max_results":20}}')
+    assert "Reference: ZX-8093" in result["output"]
+    assert "awaiting dispatch" not in result["output"]
+    assert "not capped by max_results" in result["output"]
+    assert "not full file contents" in result["output"]
+    capped = _run("grep", f'{{"pattern":".", "path":"{repo}", "max_results":1}}')
+    assert "capped at 1 matches" in capped["output"]
+    assert "not capped by max_results" not in capped["output"]
+    missing = _run("grep", f'{{"pattern":"absent-reference", "path":"{repo}"}}')
+    assert "does not mean there are no files" in missing["output"]
+
+
 def test_grep_requires_pattern(repo):
     r = _run("grep", "{}")
     assert r["exit_code"] == 1

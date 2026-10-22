@@ -50,8 +50,15 @@ async def discover_tools(content, schemas, disabled_tools):
     names = [name for name in candidates if name in catalog][:limit]
     matches = [{"name": name, "description": catalog[name].get("description", "")[:500]} for name in names]
     output = {"tools": matches, "method": method,
-              "message": "These tools are available on the next round; call them to perform the work."
-                         if names else "No permitted matching tools found. Try a more specific query or report the missing capability."}
+              "message": (
+                  "These candidate tools are available on the next round. Check their descriptions: "
+                  "a match does not prove the requested integration or capability exists. "
+                  "Call a suitable tool to do the work rather than rediscovering it."
+                  if names else
+                  "No permitted matching tools found for this query. Do not just rephrase the same capability. "
+                  "Use an explicit alternative or a genuinely different capability if relevant; "
+                  "otherwise report that discovery found no matching permitted tool."
+              )}
     return "find_tools: " + query[:80], {
         "output": json.dumps(output, ensure_ascii=False), "discovered_tools": names, "exit_code": 0,
     }

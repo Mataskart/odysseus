@@ -28,6 +28,23 @@ def test_discovery_falls_back_when_index_fails(monkeypatch):
     assert json.loads(result['output'])['method'] == 'lexical_fallback'
 
 
+def test_empty_discovery_does_not_encourage_rephrasing_or_claim_global_absence(monkeypatch):
+    set_index(monkeypatch, [])
+    _, result = asyncio.run(discover_tools('{"query":"unavailable capability"}', [], set()))
+    message = json.loads(result['output'])['message']
+    assert result['discovered_tools'] == []
+    assert "Do not just rephrase" in message
+    assert "explicit alternative" in message
+    assert "for this query" in message
+
+
+def test_discovery_match_is_a_candidate_not_proof_of_capability(monkeypatch):
+    set_index(monkeypatch, ['read_file'])
+    _, result = asyncio.run(discover_tools('{"query":"inspect source", "limit":1}', FUNCTION_TOOL_SCHEMAS, set()))
+    assert result['discovered_tools'] == ['read_file']
+    assert "does not prove" in json.loads(result['output'])['message']
+
+
 @pytest.mark.parametrize('content', ['{}', '[]', '{"query":""}', '{"query":"files","limit":99}', '{"query":"files","limit":true}'])
 def test_discovery_validates_arguments(content):
     _, result = asyncio.run(discover_tools(content, [], set()))

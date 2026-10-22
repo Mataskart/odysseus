@@ -1019,10 +1019,18 @@ class GrepTool:
         if err:
             return {"error": err, "exit_code": 1}
         if not lines:
-            return {"output": f"No matches for {pattern!r} under {root}", "exit_code": 0}
+            return {
+                "output": (f"No matches for {pattern!r} under {root}\n"
+                           "This checks the pattern in the readable search scope; it does not mean there are no files."),
+                "exit_code": 0,
+            }
         out = "\n".join(ln[:_CODENAV_MAX_LINE] for ln in lines)
         if len(lines) >= max_hits:
             out += f"\n... [capped at {max_hits} matches]"
+        else:
+            out += "\n[This result is not capped by max_results; repeating solely to raise that limit adds no coverage.]"
+        out += ("\n[Only matching lines are shown, not full file contents. "
+                "Inspect surrounding content before claiming another field is absent.]")
         return {"output": _truncate(out), "exit_code": 0}
 
 class GetWorkspaceTool:
