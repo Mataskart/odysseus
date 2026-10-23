@@ -63,6 +63,11 @@ with preserve_import_state("core.database", "src.database", "core.session_manage
     from src.llm_core import ANTHROPIC_MODELS
 
 
+@pytest.fixture(autouse=True)
+def isolated_cookbook_state(tmp_path, monkeypatch):
+    monkeypatch.setattr(model_routes, "COOKBOOK_STATE_FILE", str(tmp_path / "cookbook_state.json"))
+
+
 # ── speech endpoint settings ──
 
 def test_speech_endpoint_dependents_include_stt():

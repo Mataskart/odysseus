@@ -128,7 +128,7 @@ function _downloadOutputLooksActive(task) {
 
 function _canClearTask(task) {
   if (!task || task.status === 'running') return false;
-  if (task.type === 'serve' && (task.status === 'ready' || (!['error', 'crashed', 'failed', 'completed'].includes(task.status) && _serveOutputLooksReady(task)))) return false;
+  if (task.type === 'serve' && (task.status === 'ready' || (!['stopped', 'error', 'crashed', 'failed', 'completed'].includes(task.status) && _serveOutputLooksReady(task)))) return false;
   // If the tmux output still shows an in-flight download, the task isn't
   // actually finished — hide the clear/check pill so it doesn't show on a
   // task that's still doing work. (The next render will reflect this and
@@ -428,7 +428,7 @@ const SERVE_STATE_KEY = 'cookbook-serve-state';
 const SERVE_FAVORITES_KEY = 'cookbook-serve-favorite-models';
 
 // Polling / timeout intervals
-const TASK_POLL_INTERVAL_MS = 3000;       // delay between reconnect-loop iterations
+const TASK_POLL_INTERVAL_MS = 1000;       // delay between reconnect-loop iterations
 const BG_MONITOR_INTERVAL_MS = 10000;     // background task status poll
 const STALE_PROGRESS_MS = 5 * 60 * 1000;  // download with no progress this long = stale
 const STARTUP_STALE_PROGRESS_MS = 45 * 1000; // 0%-forever startup stall: retry much sooner
@@ -461,6 +461,9 @@ export function _parseServePhase(snapshot) {
       tps,
       reqs,
     };
+  }
+  if (/(?:llama_server|server|main):?\s+listening on\s+https?:\/\//i.test(flat)) {
+    return { phase: 'ready', status: 'ready' };
   }
   if (flat.includes('Application startup complete')) {
     return { phase: 'ready', status: 'ready' };
@@ -536,6 +539,13 @@ async function _removeEndpointByUrl(baseUrl) {
     const ep = endpoints.find(e => e.base_url === baseUrl)
             || endpoints.find(e => e.base_url.includes(hostPort));
     if (ep) {
+      const statusResponse = await fetch('/api/local-models/status', { credentials: 'same-origin' });
+      if (!statusResponse.ok) return;
+      const statuses = await statusResponse.json();
+      if (statuses[ep.id]?.autostart) {
+        window.dispatchEvent(new CustomEvent('local-model-status-changed'));
+        return;
+      }
       await fetch(`/api/model-endpoints/${ep.id}`, { method: 'DELETE', credentials: 'same-origin' });
       _refreshModelsAfterEndpointChange();
     }
@@ -746,6 +756,7 @@ async function _startQueuedDownload(task) {
 function _serveOutputLooksReady(task) {
   const out = String(task?.output || '');
   return !!task?._serveReady
+    || /(?:llama_server|server|main):?\s+listening on\s+https?:\/\//i.test(out.replace(/\s+/g, ' '))
     || /Application startup complete/i.test(out)
     || /Ollama API ready on port\s+\d+/i.test(out)
     || /(?:GET|POST)\s+\/[^\s]*\s+HTTP\/[\d.]+"\s*2\d\d/i.test(out);
@@ -2036,6 +2047,8 @@ export async function _launchServeTask(shortName, repo, cmd, fields, hostOverrid
 
 // ── Render Running tab ──
 
+let _showFinishedTasks = false;
+
 export function _renderRunningTab() {
   // Auto-clear the sidebar notif (the bright-icon highlight) when no tasks
   // are actively running or errored. _showCookbookNotif fires on each task
@@ -2081,8 +2094,9 @@ export function _renderRunningTab() {
     if (sb.style.display === 'none' && sb.id) _collapsedSectionIds.add(sb.id);
   });
 
-  const tasks = _loadTasks();
-  const hasContent = tasks.length > 0;
+  const allTasks = _loadTasks();
+  const tasks = allTasks.filter(t => _showFinishedTasks || !['done', 'completed', 'stopped'].includes(t.status) || !_canClearTask(t));
+  const hasContent = allTasks.length > 0;
   // Count anything that's really active: explicit 'running'/'queued' status,
   // OR a download whose tmux output is still showing live shard progress.
   // Without the output check, a task whose status got stuck at 'done' /
@@ -2090,6 +2104,7 @@ export function _renderRunningTab() {
   // even when the model is actively downloading on the host.
   const activeCount = tasks.filter(t =>
     t.status === 'running'
+    || t.status === 'ready'
     || t.status === 'queued'
     || _downloadOutputLooksActive(t)
   ).length;
@@ -2156,6 +2171,28 @@ export function _renderRunningTab() {
   }
 
   const _adminCard = group.querySelector('.admin-card');
+  let historyToggle = group.querySelector('.cookbook-show-finished');
+  if (!historyToggle) {
+    historyToggle = document.createElement('button');
+    historyToggle.className = 'cookbook-btn cookbook-show-finished';
+    historyToggle.addEventListener('click', () => {
+      _showFinishedTasks = !_showFinishedTasks;
+      _renderRunningTab();
+    });
+    _adminCard.appendChild(historyToggle);
+  }
+  const finishedCount = allTasks.filter(t => ['done', 'completed', 'stopped'].includes(t.status) && _canClearTask(t)).length;
+  historyToggle.textContent = _showFinishedTasks ? 'Hide finished' : `Show finished (${finishedCount})`;
+  historyToggle.style.display = finishedCount ? '' : 'none';
+  let emptyState = group.querySelector('.cookbook-active-empty');
+  if (!emptyState) {
+    emptyState = document.createElement('p');
+    emptyState.className = 'cookbook-active-empty muted';
+    emptyState.textContent = 'No active tasks.';
+    _adminCard.appendChild(emptyState);
+  }
+  emptyState.hidden = tasks.length > 0;
+
   function _ensureSection(cls, label, items) {
     let sec = group.querySelector('.' + cls);
     if (!sec) {
@@ -2209,7 +2246,13 @@ export function _renderRunningTab() {
   const _liveSafeKeys = new Set(serverKeys.map(k => (k || 'local').replace(/[^a-zA-Z0-9-]/g, '_')));
   (_adminCard || group).querySelectorAll('[class*="cookbook-server-section-"]').forEach(el => {
     const cls = [...el.classList].find(c => c.startsWith('cookbook-server-section-'));
-    if (cls && !_liveSafeKeys.has(cls.replace('cookbook-server-section-', ''))) el.remove();
+    if (cls && !_liveSafeKeys.has(cls.replace('cookbook-server-section-', ''))) {
+      el.querySelectorAll('.cookbook-task').forEach(card => {
+        card._abort?.abort();
+        if (card._uptimeInterval) clearInterval(card._uptimeInterval);
+      });
+      el.remove();
+    }
   });
 
   for (const key of serverKeys) {
@@ -2379,6 +2422,7 @@ export function _renderRunningTab() {
       }
     }
     if (!task) {
+      el._abort?.abort();
       if (el._uptimeInterval) { clearInterval(el._uptimeInterval); el._uptimeInterval = null; }
       el.remove();
     }
@@ -2959,15 +3003,7 @@ export function _renderRunningTab() {
       if (task.type === 'serve' && task.payload) {
         const endpointUrl = _endpointUrlForTask(task, outputText);
         _removeEndpointByUrl(endpointUrl);
-        const modelName = task.payload.model || task.name || '';
-        if (modelName) {
-          fetch('/api/model-endpoints', { credentials: 'same-origin' })
-            .then(r => r.json())
-            .then(eps => {
-              const ep = eps.find(e => e.name === modelName || e.base_url === endpointUrl);
-              if (ep) fetch(`/api/model-endpoints/${ep.id}`, { method: 'DELETE', credentials: 'same-origin' }).then(() => _refreshModelsAfterEndpointChange());
-            }).catch(() => {});
-        }
+
       }
       _animateOutThenRemove(el, task.sessionId);
     });
@@ -3033,6 +3069,11 @@ export function _renderRunningTab() {
     const chevron = hdr?.querySelector('.cookbook-section-chevron');
     if (chevron) { chevron.style.transform = 'rotate(-90deg)'; chevron.style.opacity = ''; }
   });
+  for (const task of tasks) {
+    if (!['running', 'ready', 'loading', 'warming'].includes(task.status)) continue;
+    const el = group.querySelector(`.cookbook-task[data-task-id="${CSS.escape(task.sessionId)}"]`);
+    if (el) _reconnectTask(el, task);
+  }
 }
 
 // ── Reconnect task (polling loop) ──
@@ -3047,7 +3088,9 @@ async function _reconnectTask(el, task) {
   const controller = new AbortController();
   el._abort = controller;
   let failCount = 0;
+  let lastSnapshot = null;
 
+  try {
   while (!controller.signal.aborted) {
     const liveWrap = el.querySelector('.cookbook-output-wrap');
     if (!el.isConnected || !_isRunningTabVisible() || !liveWrap || liveWrap.classList.contains('cookbook-task-collapsed')) {
@@ -3058,6 +3101,7 @@ async function _reconnectTask(el, task) {
       const res = await fetch('/api/shell/exec', {
         method: 'POST', credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json' },
+        signal: controller.signal,
         body: JSON.stringify({ command: _tmuxCmd(task, `capture-pane -t ${task.sessionId} -p -S -500`), timeout: 15 }),
       });
       const data = await res.json();
@@ -3314,7 +3358,8 @@ async function _reconnectTask(el, task) {
       }
 
       const snapshot = (data.stdout || '').trim();
-      if (snapshot) {
+      if (snapshot && snapshot !== lastSnapshot) {
+        lastSnapshot = snapshot;
         // Only auto-scroll to bottom if the user was already there. When
         // they've scrolled up to read earlier output, leave their position
         // alone so a fresh snapshot doesn't yank them back to the tail.
@@ -3714,12 +3759,9 @@ async function _reconnectTask(el, task) {
         }
         // Detect process exit
         if (snapshot.includes('=== Process exited with code')) {
-          const codeMatch = snapshot.match(/=== Process exited with code (\d+)/);
+          const codeMatch = snapshot.match(/=== Process exited with code (-?\d+)/);
           const code = codeMatch ? parseInt(codeMatch[1]) : -1;
-          // Serve tasks that exit without reaching ready state are always errors —
-          // a serve process should run indefinitely
-          const status = (task.type === 'serve' && !task._serveReady) ? 'error'
-            : (code === 0 ? 'done' : 'error');
+          const status = code !== 0 ? 'error' : (task.type === 'serve' ? 'stopped' : 'done');
           _updateTask(task.sessionId, { status });
           const badge = el.querySelector('.cookbook-task-status');
           if (badge) { badge.textContent = status; badge.className = `cookbook-task-status cookbook-task-${status}`; }
@@ -3728,6 +3770,7 @@ async function _reconnectTask(el, task) {
         _updateTask(task.sessionId, { output: snapshot.slice(-5000) });
       }
     } catch {
+      if (controller.signal.aborted) break;
       failCount++;
       if (failCount > 10) break;
       await new Promise(r => setTimeout(r, 10000));
@@ -3736,6 +3779,10 @@ async function _reconnectTask(el, task) {
 
     failCount = 0;
     await new Promise(r => setTimeout(r, TASK_POLL_INTERVAL_MS));
+  }
+  } finally {
+    controller.abort();
+    if (el._abort === controller) el._abort = null;
   }
 }
 
@@ -4201,6 +4248,7 @@ async function _pollBackgroundStatus() {
         const downloadDone = task.type === 'download'
           && String(combinedOutput || '').includes('DOWNLOAD_OK');
         const serveReady = task.type === 'serve'
+          && ['running', 'ready'].includes(live.status)
           && (live.status === 'ready' || _serveOutputLooksReady({ ...task, output: live.output_tail || task.output || '' }));
         const completedByOutput = depDone || downloadDone;
         const nextStatus = completedByOutput
@@ -4235,7 +4283,8 @@ async function _pollBackgroundStatus() {
               : `${previous ? `${previous}\n` : ''}${tail}`.slice(-5000);
           }
         }
-        if (live.diagnosis && !task._diagnosisDismissed) {
+        if (serveReady && task._backendDiagnosis) updates._backendDiagnosis = null;
+        if (!serveReady && live.diagnosis && !task._diagnosisDismissed) {
           updates._backendDiagnosis = live.diagnosis;
         }
         if (live.cmd && !task.payload?._cmd) {

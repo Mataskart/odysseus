@@ -917,6 +917,7 @@ def test_cached_model_scan_uses_huggingface_cache_env(tmp_path):
     (model / "blobs" / "weights.safetensors").write_bytes(b"weights")
     (model / "snapshots" / "abc").mkdir(parents=True)
     (model / "snapshots" / "abc" / "config.json").write_text("{}", encoding="utf-8")
+    (model / "snapshots" / "abc" / "model.safetensors").symlink_to(model / "blobs" / "weights.safetensors")
 
     empty_home = tmp_path / "home"
     empty_home.mkdir()

@@ -3,6 +3,9 @@
 
 import { providerLogo } from './providers.js';
 import uiModule from './ui.js';
+import { fetchLocalModelStatus } from './localModelStartup.js';
+
+let localModelStatus = {};
 import settingsModule from './settings.js';
 import { sortModelObjects } from './modelSort.js';
 import spinnerModule from './spinner.js';
@@ -267,9 +270,9 @@ function _initModelPickerDropdown() {
     if (now - _localProbeFetchedAt < _LOCAL_PROBE_TTL_MS) return;
     _localProbeFetchedAt = now;
     try {
-      const r = await fetch('/api/model-endpoints/probe-local', { credentials: 'same-origin' });
-      if (r.ok) _localProbe = (await r.json()) || {};
-    } catch (_) { /* leave stale data; picker still works */ }
+      _localProbe = await fetchLocalModelStatus();
+      localModelStatus = _localProbe;
+    } catch (_) { _localProbe = {}; localModelStatus = {}; }
   }
 
   function _getAllModels() {
@@ -284,12 +287,12 @@ function _initModelPickerDropdown() {
       // `stale: true` so the row renderer dims them + shows the offline
       // pill. The user can still click and try anyway (matches the
       // existing "local server appears offline" path on line 301).
-      const epOffline = !!item.offline;
       const allModels = (item.models || []).concat(item.models_extra || []);
       const allDisplay = (item.models_display || []).concat(item.models_extra_display || []);
       // Mark local endpoints whose live probe failed.
       const probeResult = item.endpoint_id ? _localProbe[item.endpoint_id] : null;
-      const isLocalDead = !!(probeResult && probeResult.alive === false);
+      const epOffline = typeof probeResult?.alive === 'boolean'
+        ? !probeResult.alive : !!item.offline;
       const isApiEndpoint = item.category && item.category !== 'local';
       allModels.forEach((mid, i) => {
         // Local/self-hosted servers often expose the same model through several
@@ -316,11 +319,10 @@ function _initModelPickerDropdown() {
             item.host || '',
             item.url || '',
           ].filter(Boolean).join(' '),
-          stale: isLocalDead || epOffline,
-          staleReason: epOffline
-            ? (item.ping_error || 'endpoint offline')
-            : (isLocalDead ? (probeResult.error || 'not responding') : ''),
+          stale: epOffline,
+          staleReason: epOffline ? (probeResult?.error || item.ping_error || 'endpoint offline') : '',
           offline: epOffline,
+          availabilityUnknown: item.category === 'local' && !probeResult,
         });
       });
     });
@@ -474,7 +476,7 @@ function _initModelPickerDropdown() {
       if (m.stale) {
         row.classList.add('model-switch-stale');
         row.style.opacity = '0.45';
-        row.title = `Local server appears offline: ${m.staleReason}. Click to try anyway, or relaunch in Cookbook.`;
+        row.title = 'Model is offline. A saved local launch starts automatically when you send a message.';
       }
       const _mlogo = providerLogo(m.mid);
       if (_mlogo) {
@@ -491,10 +493,13 @@ function _initModelPickerDropdown() {
       // hover so the suffix/variant tag is still discoverable (#1982).
       nameSpan.title = m.display;
       row.appendChild(nameSpan);
-      // Offline state is already conveyed by the row's reduced opacity —
-      // a redundant "offline" pill on top of that just added clutter.
-      // (Class kept on `row` so the opacity rule still applies; the text
-      // badge is gone.)
+      if (m.stale || m.availabilityUnknown) {
+        const badge = document.createElement('span');
+        badge.className = 'model-picker-offline';
+        badge.style.cssText = 'flex-shrink:0;font-size:10px;';
+        badge.textContent = m.availabilityUnknown ? 'Status unknown' : (_localProbe[m.endpointId]?.autostart ? 'Offline · starts on send' : 'Offline');
+        row.appendChild(badge);
+      }
       const epSpan = document.createElement('span');
       epSpan.className = 'model-switch-ep';
       // Don't show endpoint name if it matches the model name (local self-hosted)
@@ -808,6 +813,19 @@ async function _pick(m) {
     }
   });
 
+  const refreshAvailability = async () => {
+    if (document.visibilityState === 'hidden') return;
+    await _refreshLocalProbe();
+    if (!menu.classList.contains('hidden')) _populate(search.value || '');
+    updateModelPicker();
+  };
+  setInterval(refreshAvailability, 10000);
+  window.addEventListener('local-model-status-changed', () => {
+    _localProbeFetchedAt = 0;
+    refreshAvailability();
+  });
+  refreshAvailability();
+
   search.addEventListener('input', () => {
     if (_pickerLoading) return;
     _populate(search.value);
@@ -948,11 +966,29 @@ export function updateModelPicker() {
   const displayName = modelId ? modelId.split('/').pop() : 'Select model';
   // The header indicator clips long names with ellipsis; show the full model
   // identifier on hover (#1982). No tooltip on the "Select model" placeholder.
-  label.title = modelId || '';
+  const selectedUrl = s?.endpoint_url || latestPending?.url || '';
+  const selectedEndpoint = window.modelsModule?.getCachedItems?.().find(item =>
+    selectedUrl ? item.url?.replace(/\/+$/, '') === selectedUrl.replace(/\/+$/, '')
+      : (item.models || []).concat(item.models_extra || []).includes(modelId)
+  );
+  const availability = localModelStatus[selectedEndpoint?.endpoint_id];
+  const offlineLabel = availability?.alive === false
+    ? (availability.starting ? ' · Starting…' : ' · Offline')
+    : (selectedEndpoint?.category === 'local' && !availability ? ' · Status unknown' : '');
+  label.title = (modelId || '') + offlineLabel;
   const logo = modelId ? providerLogo(modelId) : null;
   if (logo) {
-    label.innerHTML = '<span class="model-picker-logo">' + logo + '</span> ' + displayName;
+    label.innerHTML = '<span class="model-picker-logo">' + logo + '</span> ';
+    label.appendChild(document.createTextNode(displayName));
   } else {
     label.textContent = displayName;
   }
+  let statusLabel = label.parentElement.querySelector('.model-picker-availability');
+  if (!statusLabel) {
+    statusLabel = document.createElement('span');
+    statusLabel.className = 'model-picker-availability';
+    statusLabel.style.cssText = 'flex-shrink:0;font-size:10px;';
+    label.after(statusLabel);
+  }
+  statusLabel.textContent = offlineLabel;
 }

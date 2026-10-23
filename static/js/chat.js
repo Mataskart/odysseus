@@ -1,3 +1,4 @@
+import { ensureLocalModel } from './localModelStartup.js';
 // static/js/chat.js
 
 /**
@@ -1971,7 +1972,7 @@ import { loadPanel } from './panels.js';
 
       // Timeout: 6 min for research and agent mode, 3 min otherwise
       const timeoutMs = el('research-toggle').checked || _isAgent ? RESEARCH_TIMEOUT_MS : DEFAULT_TIMEOUT_MS;
-      timeoutId = setTimeout(() => {
+      const responseTimeoutHandler = () => {
         if (!abortCtrl.signal.aborted) {
           timedOut = true;
           abortCtrl._reason = 'timeout';
@@ -1998,7 +1999,7 @@ import { loadPanel } from './panels.js';
             }, RUN_ID_ABORT_GRACE_MS);
           }
         }
-      }, timeoutMs);
+      };
       clearResponseTimeout = () => {
         if (responseTimeoutCleared) return;
         responseTimeoutCleared = true;
@@ -2096,6 +2097,34 @@ import { loadPanel } from './panels.js';
         try { return Intl.DateTimeFormat().resolvedOptions().timeZone || ''; }
         catch { return ''; }
       })();
+      clearFirstTokenWaitTimers();
+      let startupProgress = null;
+      _activeStreams.get(streamSessionId).startingModel = true;
+      try {
+        await ensureLocalModel(selectedRouteForSend, {
+          signal: abortCtrl.signal,
+          onProgress: elapsed => {
+            const active = _activeStreams.get(streamSessionId);
+            if (active) active.lastActivity = Date.now();
+            spinner.updateMessage(`Starting your model · ${elapsed}s`);
+            if (!startupProgress) {
+              startupProgress = document.createElement('progress');
+              startupProgress.setAttribute('aria-label', 'Starting model');
+              startupProgress.style.cssText = 'display:block;width:100%;max-width:320px;margin:8px 0;';
+              bodyDiv.appendChild(startupProgress);
+            }
+          },
+        });
+      } finally {
+        startupProgress?.remove();
+        const active = _activeStreams.get(streamSessionId);
+        if (active) { active.startingModel = false; active.lastActivity = Date.now(); }
+      }
+      abortCtrl.signal.throwIfAborted();
+      if (_streamGenerations.get(streamSessionId) !== streamGeneration) return;
+      spinner.updateMessage('Preparing conversation context');
+      scheduleFirstTokenWaitMessages('context');
+      timeoutId = setTimeout(responseTimeoutHandler, timeoutMs);
       _sendPerf.mark('chat_stream_post_begin');
       const res = await fetch(`${API_BASE}/api/chat_stream`, {
         method: 'POST',
@@ -4802,7 +4831,7 @@ import { loadPanel } from './panels.js';
   }
   async function _probeStaleLocalStream() {
     const active = _getForegroundStreamState();
-    if (!active || _staleStreamProbeInFlight) return;
+    if (!active || active.startingModel || _staleStreamProbeInFlight) return;
     if (Date.now() - (active.lastActivity || _lastReaderActivity) < STALE_LOCAL_STREAM_MS) return;
     const sid = sessionModule.getCurrentSessionId && sessionModule.getCurrentSessionId();
     if (!sid) return;

@@ -164,7 +164,13 @@ def _disable_stale_cookbook_local_endpoints(db) -> int:
         return 0
     settings = _load_settings()
     touched_settings = False
+    from src.local_model_startup import LocalModelStartup
+    startup_profiles = LocalModelStartup(COOKBOOK_STATE_FILE, None)
+    disabled_count = 0
     for ep in stale:
+        if startup_profiles.profile(ep):
+            continue
+        disabled_count += 1
         ep.is_enabled = False
         ep.model_refresh_mode = "disabled"
         if _clear_endpoint_settings_for_endpoint(settings, ep.id):
@@ -173,7 +179,7 @@ def _disable_stale_cookbook_local_endpoints(db) -> int:
     if touched_settings:
         _save_settings(settings)
     db.commit()
-    return len(stale)
+    return disabled_count
 
 
 def _clear_user_pref_endpoint_refs(all_prefs: dict, ep_id: str) -> int:
@@ -1360,11 +1366,14 @@ def _picker_models_for_endpoint(ep, base_url: str, kind: str):
         if not _has_explicit_pinned_models(ep):
             pinned = _legacy_visible_api_models(ep)
         return pinned, pinned
-    return _visible_models(
-        _cached_model_ids(ep),
-        getattr(ep, "hidden_models", None),
-        pinned,
-    ), pinned
+    cached = _cached_model_ids(ep)
+    cached_repositories = set()
+    for model_id in cached:
+        match = re.search(r"(?:^|[/\\])models--([^/\\]+)--([^/\\]+)[/\\]snapshots[/\\]", model_id)
+        if match:
+            cached_repositories.add(f"{match.group(1)}/{match.group(2)}")
+    pinned = [mid for mid in pinned if mid in cached or mid not in cached_repositories]
+    return _visible_models(cached, getattr(ep, "hidden_models", None), pinned), pinned
 
 
 def _api_key_fingerprint(api_key: Optional[str]) -> str:

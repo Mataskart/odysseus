@@ -466,19 +466,26 @@ def _cached_model_scan_script(model_dirs: list[str] | None = None, add_hf_cache:
         "            sz, nf, ic = sz2, nf2, ic or ic2",
         "        is_video = bool(re.search(r'(?i)(^|/)Lightricks/LTX-|(^|/)LTX[-_/]|video|text-to-video|image-to-video', rid))",
         "        is_diffusion = is_video; is_adapter = bool(re.search(r'(?i)(lora|adapter|peft|qlora|control[-_]?lora|diffusion[-_]?lora)', rid)); gguf_files = []",
+        "        has_weights = False; is_static_embedding = False",
         "        if os.path.isdir(snap):",
         "            for sd in os.listdir(snap):",
         "                sf = os.path.join(snap, sd)",
         "                if not os.path.isdir(sf): continue",
+        "                try:",
+        "                    with open(os.path.join(sf, 'config.json')) as config_file: config = json.load(config_file)",
+        "                    if config.get('model_type') == 'model2vec' or 'StaticModel' in config.get('architectures', []): is_static_embedding = True",
+        "                except (OSError, ValueError, TypeError): pass",
         "                if os.path.exists(os.path.join(sf, 'model_index.json')): is_diffusion = True",
         "                if os.path.exists(os.path.join(sf, 'adapter_config.json')) or os.path.exists(os.path.join(sf, 'adapter_model.safetensors')): is_adapter = True",
         "                for _root, _dirs, _fns in safe_walk(sf):",
         "                    for _fn in _fns:",
         "                        _lfn = _fn.lower()",
+        "                        if _lfn.endswith(('.gguf', '.safetensors', '.bin', '.pt', '.pth', '.onnx')) and os.path.isfile(os.path.join(_root, _fn)): has_weights = True",
         "                        if _lfn.endswith('.safetensors') and re.search(r'(?i)(ltx|video|upscaler)', _lfn): is_video = True; is_diffusion = True",
         "                        if _lfn in ('adapter_config.json','adapter_model.safetensors','pytorch_lora_weights.safetensors') or 'lora' in _lfn:",
         "                            is_adapter = True",
         "                for f in collect_ggufs(sf): f['rel_path'] = sd + '/' + f['rel_path']; gguf_files.append(f)",
+        "        if not ic and (not has_weights or is_static_embedding): continue",
         "        models.append({'repo_id':rid,'size_bytes':sz,'nb_files':nf,'has_incomplete':ic,'path':cache,'is_diffusion':is_diffusion,'is_video':is_video,'is_adapter':is_adapter,'is_gguf':bool(gguf_files),'gguf_files':gguf_files})",
         "def hf_cache_paths():",
         "    candidates = []",
@@ -1125,6 +1132,8 @@ def _parse_serve_phase(snapshot: str, task_type: str = "serve") -> dict:
             "tps": tps,
             "reqs": reqs,
         }
+    if re.search(r'(?:llama_server|server|main):?\s+listening on\s+https?://', flat, re.I):
+        return {"phase": "ready", "status": "ready"}
     if "Application startup complete" in flat:
         return {"phase": "ready", "status": "ready"}
     if re.search(r'Ollama API ready on port\s+\d+', flat, re.I):

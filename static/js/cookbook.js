@@ -2985,7 +2985,7 @@ export function _serverEntryHtml(s, i, defaultServer, forceRemote, isNew) {
   return html;
 }
 
-function _renderRecipes() {
+function _renderRecipes(initializeSearch = true) {
   const body = document.querySelector('#cookbook-modal .cookbook-body');
   if (!body) return;
 
@@ -3286,9 +3286,10 @@ function _renderRecipes() {
   body.innerHTML = html;
   _wireTabEvents(body);
 
-  // Auto-init What Fits
-  _hwfitInit();
-  _hwfitFetch(false, { allowNetwork: false });
+  if (initializeSearch) {
+    _hwfitInit();
+    _hwfitFetch(false, { allowNetwork: false });
+  }
 }
 
 // ── Public API ──
@@ -3360,6 +3361,12 @@ export async function open(opts) {
     } else {
       const t = modal.querySelector(`.cookbook-tab[data-backend="${requestedTab}"]`);
       if (t && !t.classList.contains('active')) t.click();
+      else if (requestedTab === 'Search') {
+        _hwfitInit();
+        _hwfitFetch(false, { allowNetwork: false });
+      } else if (requestedTab === 'Running') {
+        _renderRunningTab();
+      }
     }
     if (opts?.usecase) {
       const u = document.getElementById('hwfit-usecase');
@@ -3431,7 +3438,7 @@ export async function open(opts) {
   // Guard the render passes: a single broken task card must not throw out of
   // open() and leave the modal stuck hidden (it has no catch, so the panel
   // would silently never appear). Show the window regardless; log and move on.
-  try { _renderRecipes(); } catch (e) { console.error('[cookbook] renderRecipes failed', e); }
+  try { _renderRecipes(false); } catch (e) { console.error('[cookbook] renderRecipes failed', e); }
   _rendered = true;
   _clearCookbookNotif();
   try { _renderRunningTab(); } catch (e) { console.error('[cookbook] renderRunningTab failed', e); }

@@ -401,6 +401,65 @@ def setup_cookbook_routes() -> APIRouter:
     _tasks_status_cache = {"ts": 0.0, "value": None}
     _tasks_status_inflight = {"task": None}
 
+    from src.local_model_startup import LocalModelStartup
+
+    async def launch_saved_model(profile):
+        result = await _launch_model_serve(None, ServeRequest(**profile))
+        if result.get("ok"):
+            from core.atomic_io import atomic_write_json
+            state = json.loads(_cookbook_state_path.read_text()) if _cookbook_state_path.exists() else {}
+            tasks = state.get("tasks") or []
+            if isinstance(tasks, dict):
+                tasks = list(tasks.values())
+            state["tasks"] = tasks
+            tasks.append({"sessionId": result["session_id"], "type": "serve", "status": "running",
+                          "name": profile["repo_id"], "remoteHost": "", "ts": int(time.time() * 1000),
+                          "_endpointId": result.get("endpoint_id"),
+                          "payload": {"repo_id": profile["repo_id"], "_cmd": profile["cmd"]}})
+            atomic_write_json(str(_cookbook_state_path), state, indent=2)
+        return result
+
+    startup = LocalModelStartup(_cookbook_state_path, launch_saved_model)
+
+    def accessible_local_endpoints(request):
+        from core.database import SessionLocal, ModelEndpoint
+        from src.auth_helpers import effective_user, owner_filter
+        from routes.model_routes import _classify_endpoint, _effective_endpoint_kind
+        require_user(request)
+        owner = effective_user(request)
+        auth = getattr(request.app.state, "auth_manager", None)
+        is_admin = bool(owner and auth and auth.is_admin(owner))
+        with SessionLocal() as db:
+            query = db.query(ModelEndpoint).filter(ModelEndpoint.is_enabled == True)
+            if owner and not is_admin:
+                query = owner_filter(query, ModelEndpoint, owner)
+            endpoints = query.all()
+        return [ep for ep in endpoints if _classify_endpoint(ep.base_url, _effective_endpoint_kind(ep, ep.base_url)) == "local"]
+
+    @router.get("/api/local-models/status")
+    async def local_models_status(request: Request):
+        endpoints = accessible_local_endpoints(request)
+        statuses = await asyncio.gather(*(startup.status(ep) for ep in endpoints))
+        return {ep.id: status for ep, status in zip(endpoints, statuses)}
+
+    class EnsureLocalModelRequest(BaseModel):
+        model: str
+
+    @router.post("/api/local-models/{endpoint_id}/ensure-running")
+    async def ensure_local_model(request: Request, endpoint_id: str, body: EnsureLocalModelRequest):
+        from routes.chat_helpers import _allowed_models_for_request
+        endpoints = accessible_local_endpoints(request)
+        endpoint = next((ep for ep in endpoints if ep.id == endpoint_id), None)
+        if endpoint is None:
+            raise HTTPException(404, "Local model endpoint not found")
+        allowed = _allowed_models_for_request(request)
+        if allowed is not None and body.model not in allowed:
+            raise HTTPException(403, "This model is not available to your account")
+        models = json.loads(endpoint.cached_models or "[]") + json.loads(endpoint.pinned_models or "[]")
+        if body.model not in models:
+            raise HTTPException(400, "The selected model is not registered at this endpoint")
+        return await startup.ensure(endpoint)
+
     def _mask_secret(value: str) -> str:
         if not value:
             return ""
@@ -1747,8 +1806,9 @@ def setup_cookbook_routes() -> APIRouter:
                             f"crash-watchdog: dropping endpoint {endpoint_id} "
                             f"({ep.name} @ {ep.base_url}) — serve exited {exit_code}"
                         )
-                        db.delete(ep)
-                        db.commit()
+                        if not startup.profile(ep):
+                            db.delete(ep)
+                            db.commit()
                 finally:
                     db.close()
             except Exception as e:
@@ -1970,6 +2030,9 @@ def setup_cookbook_routes() -> APIRouter:
         a fake org/name wrapper.
         """
         require_admin(request)
+        return await _launch_model_serve(request, req)
+
+    async def _launch_model_serve(request, req):
         # Defence-in-depth: reject values that could break out of shell contexts.
         validate_remote_host(req.remote_host)
         req.ssh_port = validate_ssh_port(req.ssh_port)
@@ -2825,6 +2888,12 @@ def setup_cookbook_routes() -> APIRouter:
         except Exception:
             pass
 
+        if endpoint_id and not is_image_endpoint and not is_pip_install:
+            from core.database import SessionLocal, ModelEndpoint
+            with SessionLocal() as db:
+                endpoint = db.get(ModelEndpoint, endpoint_id)
+                if endpoint:
+                    startup.remember(endpoint, req)
         return {"ok": True, "session_id": session_id, "remote": remote or "local",
                 "endpoint_id": endpoint_id}
 
@@ -4433,21 +4502,17 @@ def setup_cookbook_routes() -> APIRouter:
                 except Exception:
                     pass
             else:
-                # Skip the live SSH check entirely for tasks already in a
-                # terminal state — they won't change, and 10s timeouts
-                # stacked per task were the dominant cost of this whole
-                # status endpoint (3+ minute stalls with ~8 accumulated
-                # stopped tasks). The agent's `list_served_models` call
-                # was blocking the chat stream every time.
+                # Avoid slow SSH checks for finished tasks; always recheck local serves.
                 _task_status = (task.get("status") or "").lower()
                 _persisted_serve_ready = (
                     task_type == "serve"
                     and bool(full_snapshot)
                     and _parse_serve_phase(full_snapshot, task_type).get("status") == "ready"
                 )
+                recheck_local_serve = task_type == "serve" and not remote
                 if _task_status in {"stopped", "done", "completed",
                                     "crashed", "error", "failed",
-                                    "ended", "killed"} and not _persisted_serve_ready:
+                                    "ended", "killed"} and not _persisted_serve_ready and not recheck_local_serve:
                     is_alive = False
                     # Keep the persisted output_tail for the UI — it's
                     # what the agent uses to diagnose past failures.
@@ -4496,8 +4561,8 @@ def setup_cookbook_routes() -> APIRouter:
                 exit_code = int(exit_match.group(1)) if exit_match else None
                 has_error = "error" in lower or "failed" in lower or "traceback" in lower
                 if has_exit and task_type == "serve":
-                    # Serve tasks that exit are always errors — they should run indefinitely
-                    status = "error"
+                    # A clean shutdown belongs in history, not the failure list.
+                    status = "stopped" if exit_code == 0 else "error"
                 elif has_exit and task_type == "download":
                     # Dependency installs are tracked as download tasks but only
                     # emit the generic runner exit marker, not HF download markers.
@@ -4551,9 +4616,9 @@ def setup_cookbook_routes() -> APIRouter:
 
             # Parse structured phase info — single source of truth for the UI
             phase_info = _parse_serve_phase(full_snapshot, task_type) if (task_type == "serve" and full_snapshot) else {}
-            if phase_info.get("status") == "ready" and is_alive:
+            if phase_info.get("status") == "ready" and is_alive and exit_code is None:
                 status = "ready"
-            serve_phase = phase_info.get("phase", "")
+            serve_phase = phase_info.get("phase", "") if status in {"running", "ready"} else ""
             diagnosis = _diagnose_serve_output(full_snapshot) if task_type == "serve" and full_snapshot else None
             if diagnosis and status in {"running", "unknown", "stopped"} and phase_info.get("status") != "ready":
                 status = "error"

@@ -48,7 +48,7 @@ const _serveDrafts = new Map();
 const SERVE_FAVORITES_KEY = 'cookbook-serve-favorite-models';
 
 let _cachedAllModels = [];
-const _CACHED_MODELS_SCAN_KEY = 'cookbook_cached_models_scan_v3_ltx_video';
+const _CACHED_MODELS_SCAN_KEY = 'cookbook_cached_models_scan_v4_launchable';
 const _CACHED_MODELS_SCAN_TTL = 6 * 3600 * 1000;
 
 function _normalizeCookbookModelDir(dir) {
