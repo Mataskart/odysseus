@@ -56,6 +56,10 @@ def extract_office_text(file_path: str) -> str:
     extract_pdf_text — the indexer then simply skips the file's content.
     A .docx still falls back to the Word XML inside the zip.
     """
+    if file_path.lower().endswith(".doc"):
+        from src.document_processor import _process_legacy_word_document
+        return _process_legacy_word_document(file_path, os.path.basename(file_path))
+
     from src.markitdown_runtime import convert_to_markdown
     text = convert_to_markdown(file_path) or ""
     if text.strip():
@@ -71,7 +75,7 @@ class PersonalDocsConfig:
     CHUNK_SIZE: int = 1000
     CHUNK_OVERLAP: int = 200
     DEFAULT_EXTENSIONS: Tuple[str, ...] = (
-        ".txt", ".md", ".json", ".pdf", ".docx", ".pptx", ".xlsx", ".xls", ".epub",
+        ".txt", ".md", ".json", ".pdf", ".doc", ".docx", ".pptx", ".xlsx", ".xls", ".epub",
     )
     DEFAULT_K: int = 5
     STOP_WORDS: Set[str] = None
@@ -126,7 +130,7 @@ def _read_document_text(path: str) -> str:
     ext = os.path.splitext(path)[1].lower()
     if ext == ".pdf":
         return extract_pdf_text(path)
-    if ext in MARKITDOWN_EXTS:
+    if ext == ".doc" or ext in MARKITDOWN_EXTS:
         return extract_office_text(path)
     return read_text_file(path)
 

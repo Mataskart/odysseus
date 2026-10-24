@@ -4,7 +4,7 @@
 // stop/restart, diagnosis, auto-fix, background monitor
 // ============================================
 
-import uiModule from './ui.js';
+import uiModule from './ui.js?v=20260916largetoolscroll1';
 import { _diagnose, _showDiagnosis, _clearDiagnosis } from './cookbook-diagnosis.js';
 import { registerMenuDismiss } from './escMenuStack.js';
 import { computeProgressSignal } from './cookbookProgressSignal.js';
@@ -14,9 +14,13 @@ import { topPortalZ } from './toolWindowZOrder.js';
 // Human-friendly badge label for a task's internal status. Avoids surfacing
 // the word "error" in the sidebar — a server the user stopped or one that
 // quit cleanly reads as "stopped", not "error".
+function _isFinishedDownload(status, type) {
+  return type === 'download' && (status === 'done' || status === 'completed');
+}
+
 function _statusLabel(status, type) {
   if (status === 'running' && type === 'download') return 'downloading';
-  if (status === 'done' && type === 'download') return 'finished';
+  if (_isFinishedDownload(status, type)) return 'finished';
   if (status === 'error') return 'stopped';
   return status || '';
 }
@@ -532,21 +536,21 @@ function _nextAvailablePort() {
 
 async function _removeEndpointByUrl(baseUrl) {
   try {
-    const res = await fetch('/api/model-endpoints', { credentials: 'same-origin' });
+    const res = await _fetchWithTimeout('/api/model-endpoints', { credentials: 'same-origin' });
     if (!res.ok) return;
     const endpoints = await res.json();
     const hostPort = baseUrl.replace(/^https?:\/\//, '').replace(/\/.*$/, '');
     const ep = endpoints.find(e => e.base_url === baseUrl)
             || endpoints.find(e => e.base_url.includes(hostPort));
     if (ep) {
-      const statusResponse = await fetch('/api/local-models/status', { credentials: 'same-origin' });
+      const statusResponse = await _fetchWithTimeout('/api/local-models/status', { credentials: 'same-origin' });
       if (!statusResponse.ok) return;
       const statuses = await statusResponse.json();
       if (statuses[ep.id]?.autostart) {
         window.dispatchEvent(new CustomEvent('local-model-status-changed'));
         return;
       }
-      await fetch(`/api/model-endpoints/${ep.id}`, { method: 'DELETE', credentials: 'same-origin' });
+      await _fetchWithTimeout(`/api/model-endpoints/${ep.id}`, { method: 'DELETE', credentials: 'same-origin' });
       _refreshModelsAfterEndpointChange();
     }
   } catch {}
@@ -706,7 +710,7 @@ async function _startQueuedDownload(task) {
     }
   }
   try {
-    const res = await fetch('/api/model/download', {
+    const res = await _fetchWithTimeout('/api/model/download', {
       method: 'POST', credentials: 'same-origin',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(task.payload),
@@ -1201,6 +1205,32 @@ function _startWaveSync() {
 
 function _registerWaveEl(el) { _waveEls.add(el); _startWaveSync(); }
 
+// Running cards are rebuilt when status changes, server groups change, or a
+// task is cleared. Dispose card-owned work before removing those DOM nodes so
+// re-renders cannot leave orphaned uptime timers, tmux streams, or wave nodes
+// running in the background.
+function _disposeTaskCard(el) {
+  if (!el) return;
+  if (el._abort) {
+    try { el._abort.abort(); } catch {}
+    el._abort = null;
+  }
+  if (el._uptimeInterval) {
+    clearInterval(el._uptimeInterval);
+    el._uptimeInterval = null;
+  }
+  if (el._longPressTimer) {
+    clearTimeout(el._longPressTimer);
+    el._longPressTimer = null;
+  }
+  const wave = el.querySelector?.('.cookbook-task-wave');
+  if (wave) _waveEls.delete(wave);
+  if (!_waveEls.size && _waveTimer) {
+    clearInterval(_waveTimer);
+    _waveTimer = null;
+  }
+}
+
 // ── Notifications ──
 
 function _showCookbookNotif(isError = false) {
@@ -1359,11 +1389,11 @@ function _syncToServer() {
         const favorites = JSON.parse(localStorage.getItem(SERVE_FAVORITES_KEY) || '[]');
         state.serveFavorites = Array.isArray(favorites) ? favorites.filter(Boolean).map(String) : [];
       } catch {}
-      await fetch('/api/cookbook/state', {
+      await _fetchWithTimeout('/api/cookbook/state', {
         method: 'POST', credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(_stripStateSecrets(state)),
-      });
+      }, 15000);
     } catch {}
   }, 400);
 }
@@ -1397,9 +1427,11 @@ function _normalizeState(state) {
   return state;
 }
 
-export async function _syncFromServer() {
+let _syncFromServerInFlight = null;
+
+async function _syncFromServerImpl() {
   try {
-    const res = await fetch('/api/cookbook/state', { credentials: 'same-origin' });
+    const res = await _fetchWithTimeout('/api/cookbook/state', { credentials: 'same-origin' }, 15000);
     if (!res.ok) return false;
     const state = _normalizeState(await res.json());
     if (!state || !state.env) return false;
@@ -1461,6 +1493,20 @@ export async function _syncFromServer() {
   } catch { return false; }
 }
 
+// Boot, modal-open, focus, and visibility refreshes can converge on the same
+// state endpoint. Share the active request so two callers cannot race with
+// different snapshots or trigger duplicate state-sync renders.
+export function _syncFromServer() {
+  if (_syncFromServerInFlight) return _syncFromServerInFlight;
+  const pending = _syncFromServerImpl();
+  const clearPending = () => {
+    if (_syncFromServerInFlight === pending) _syncFromServerInFlight = null;
+  };
+  pending.then(clearPending, clearPending);
+  _syncFromServerInFlight = pending;
+  return pending;
+}
+
 // ── Retry download ──
 
 // Bounded auto-retry counter for downloads, keyed by model — network blips on
@@ -1475,7 +1521,7 @@ async function _retryTask(el, task) {
   const badge = el?.querySelector('.cookbook-task-status');
   if (badge) { badge.textContent = 'restarting...'; badge.className = 'cookbook-task-status'; }
   try {
-    await fetch('/api/shell/exec', {
+    await _fetchWithTimeout('/api/shell/exec', {
       method: 'POST', credentials: 'same-origin',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ command: _tmuxGracefulKill(task) }),
@@ -1503,7 +1549,7 @@ async function _retryDownload(name, payload, replaceSessionId = '') {
     // the plain, reliable downloader for this and any further attempt (it resumes
     // from the cached .incomplete files, so no progress is lost).
     const _payload = { ...(payload || {}), disable_hf_transfer: true };
-    const res = await fetch('/api/model/download', {
+    const res = await _fetchWithTimeout('/api/model/download', {
       method: 'POST', credentials: 'same-origin',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(_payload),
@@ -1577,7 +1623,7 @@ export async function _serveAutoFix(panel, envVar) {
 
   const killCmd = _tmuxCmd(task, `kill-session -t ${taskId}`);
   try {
-    await fetch('/api/shell/exec', {
+    await _fetchWithTimeout('/api/shell/exec', {
       method: 'POST', credentials: 'same-origin',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ command: killCmd }),
@@ -1640,7 +1686,7 @@ export async function _serveAutoRetryReplace(panel, flag, value) {
   if (!_guardServeRetry(panel, taskEl)) return;
 
   try {
-    await fetch('/api/shell/exec', {
+    await _fetchWithTimeout('/api/shell/exec', {
       method: 'POST', credentials: 'same-origin',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ command: _tmuxCmd(task, `kill-session -t ${taskId}`) }),
@@ -1682,7 +1728,7 @@ export async function _serveAutoRetryRemove(panel, flag) {
   if (!_guardServeRetry(panel, taskEl)) return;
 
   try {
-    await fetch('/api/shell/exec', {
+    await _fetchWithTimeout('/api/shell/exec', {
       method: 'POST', credentials: 'same-origin',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ command: _tmuxCmd(task, `kill-session -t ${taskId}`) }),
@@ -1715,7 +1761,7 @@ export async function _serveAutoRetry(panel, flag) {
   if (!_guardServeRetry(panel, taskEl)) return;
 
   try {
-    await fetch('/api/shell/exec', {
+    await _fetchWithTimeout('/api/shell/exec', {
       method: 'POST', credentials: 'same-origin',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ command: _tmuxCmd(task, `kill-session -t ${taskId}`) }),
@@ -1897,7 +1943,7 @@ async function _confirmGpuPreflight(reqBody, shortName, repo, cmd) {
   if (reqBody.remote_host) params.set('host', reqBody.remote_host);
   if (reqBody.ssh_port) params.set('ssh_port', reqBody.ssh_port);
   try {
-    const res = await fetch(`/api/cookbook/gpus${params.toString() ? `?${params.toString()}` : ''}`, {
+    const res = await _fetchWithTimeout(`/api/cookbook/gpus${params.toString() ? `?${params.toString()}` : ''}`, {
       method: 'GET',
       credentials: 'same-origin',
     });
@@ -1938,7 +1984,7 @@ export async function _launchServeTask(shortName, repo, cmd, fields, hostOverrid
     try {
       const _old = _loadTasks().find(t => t.sessionId === _replaceTaskId);
       if (_old && _old.type === 'serve') {
-        await fetch('/api/shell/exec', {
+        await _fetchWithTimeout('/api/shell/exec', {
           method: 'POST', credentials: 'same-origin',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ command: _tmuxGracefulKill(_old) }),
@@ -1960,7 +2006,7 @@ export async function _launchServeTask(shortName, repo, cmd, fields, hostOverrid
         const _tm = _t.payload._cmd.match(/--port[=\s]+(\d+)/) || _t.payload._cmd.match(/(?:^|\s)-p[=\s]+(\d+)/);
         if ((_tm ? _tm[1] : '') === _newPort && (_t.remoteHost || '') === _host) {
           try {
-            await fetch('/api/shell/exec', {
+            await _fetchWithTimeout('/api/shell/exec', {
               method: 'POST', credentials: 'same-origin',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ command: _tmuxGracefulKill(_t) }),
@@ -2013,7 +2059,7 @@ export async function _launchServeTask(shortName, repo, cmd, fields, hostOverrid
       uiModule.showToast('Launch cancelled — GPU is already in use');
       return;
     }
-    const res = await fetch('/api/model/serve', {
+    const res = await _fetchWithTimeout('/api/model/serve', {
       method: 'POST', credentials: 'same-origin',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(reqBody),
@@ -2094,6 +2140,7 @@ export function _renderRunningTab() {
     if (sb.style.display === 'none' && sb.id) _collapsedSectionIds.add(sb.id);
   });
 
+  body.querySelectorAll('.cookbook-task').forEach(_disposeTaskCard);
   const allTasks = _loadTasks();
   const tasks = allTasks.filter(t => _showFinishedTasks || !['done', 'completed', 'stopped'].includes(t.status) || !_canClearTask(t));
   const hasContent = allTasks.length > 0;
@@ -2303,8 +2350,7 @@ export function _renderRunningTab() {
       toRemove.forEach(t => {
         const el = document.querySelector(`.cookbook-task[data-task-id="${t.sessionId}"]`);
         if (el) {
-          if (el._abort) el._abort.abort();
-          if (el._uptimeInterval) clearInterval(el._uptimeInterval);
+          _disposeTaskCard(el);
           el.style.transition = 'opacity 0.35s ease, transform 0.35s ease';
           el.style.opacity = '0';
           el.style.transform = 'translateX(-10px)';
@@ -2312,7 +2358,13 @@ export function _renderRunningTab() {
       });
       // After the animation, remove the cards and tidy up the now-empty section.
       setTimeout(() => {
-        toRemove.forEach(t => document.querySelector(`.cookbook-task[data-task-id="${t.sessionId}"]`)?.remove());
+        toRemove.forEach(t => {
+          const el = document.querySelector(`.cookbook-task[data-task-id="${t.sessionId}"]`);
+          if (el) {
+            _disposeTaskCard(el);
+            el.remove();
+          }
+        });
         // If this server's section is now empty (only finished tasks lived here),
         // remove the whole section so its header/title doesn't linger.
         const _sk = (host || 'local').replace(/[^a-zA-Z0-9-]/g, '_');
@@ -2373,14 +2425,13 @@ export function _renderRunningTab() {
     const task = tasks.find(t => t.sessionId === id);
     if (task) {
       el.dataset.status = task.status;
-      const isDone = task.status === 'done';
       // Type chip doubles as the "finished" badge once a task completes — both
       // download and serve show the same green FINISHED chip.
       const typeChip = el.querySelector('.cookbook-task-type');
       if (typeChip) {
         // Only DOWNLOAD tasks flip to "finished" when done — serve tasks keep
         // saying "serve" because the model is still running on that port.
-        const isDoneDl = isDone && task.type === 'download';
+        const isDoneDl = _isFinishedDownload(task.status, task.type);
         typeChip.textContent = isDoneDl ? 'finished' : task.type;
         typeChip.classList.toggle('cookbook-task-type-done', isDoneDl);
       }
@@ -2422,8 +2473,7 @@ export function _renderRunningTab() {
       }
     }
     if (!task) {
-      el._abort?.abort();
-      if (el._uptimeInterval) { clearInterval(el._uptimeInterval); el._uptimeInterval = null; }
+      _disposeTaskCard(el);
       el.remove();
     }
   });
@@ -2444,7 +2494,7 @@ export function _renderRunningTab() {
     const logoName = task.type === 'download' ? (task.payload?.repo_id || task.name) : task.name;
     el.innerHTML = `
       <div class="cookbook-task-header">
-        <span class="cookbook-task-type${(task.status === 'done' && task.type === 'download') ? ' cookbook-task-type-done' : ''}" data-type="${esc(task.type)}">${esc((task.status === 'done' && task.type === 'download') ? 'finished' : task.type)}</span>
+        <span class="cookbook-task-type${_isFinishedDownload(task.status, task.type) ? ' cookbook-task-type-done' : ''}" data-type="${esc(task.type)}">${esc(_isFinishedDownload(task.status, task.type) ? 'finished' : task.type)}</span>
         <span class="cookbook-task-name">${modelLogo(logoName)}${esc(displayName)}</span>
         <span class="cookbook-task-indicator"><span class="cookbook-task-wave" style="display:${task.status === 'running' ? '' : 'none'}"></span>${_canLaunchDownloadedTask(task) ? '<button type="button" class="cookbook-task-serve-btn" title="Open in Launch"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg><span>Launch</span></button>' : ''}<span class="cookbook-task-check" title="Clear" style="display:${_canClearTask(task) ? '' : 'none'}"><svg class="cookbook-task-check-ico" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#50fa7b" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg><svg class="cookbook-task-clear-ico" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg><span class="cookbook-task-done-label">${esc(_clearPillLabel(task))}</span><span class="cookbook-task-clear-label">clear</span></span></span>
         <button type="button" class="cookbook-task-start-now" title="Start this queued download now" style="display:${(task.type === 'download' && task.status === 'queued') ? '' : 'none'}"><svg width="11" height="11" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><polygon points="8 5 19 12 8 19 8 5"/></svg><span>start now</span></button>
@@ -2565,7 +2615,7 @@ export function _renderRunningTab() {
         // Otherwise: real clear. Kill the tmux session as belt-and-suspenders,
         // then animate out + remove the row.
         try {
-          fetch('/api/shell/exec', {
+          _fetchWithTimeout('/api/shell/exec', {
             method: 'POST', credentials: 'same-origin',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ command: _tmuxCmd(task, `kill-session -t ${task.sessionId}`) }),
@@ -2612,20 +2662,21 @@ export function _renderRunningTab() {
     if (menuBtn) {
       // Long-press detection on the card: ~500ms hold without scroll movement
       // re-uses the menu button's click path (so we don't duplicate logic).
-      let _lpTimer = null;
       let _lpStartY = 0;
       let _lpCanceled = false;
       const _lpStart = (e) => {
         _lpCanceled = false;
         _lpStartY = (e.touches?.[0]?.clientY) ?? 0;
-        _lpTimer = setTimeout(() => {
+        if (el._longPressTimer) clearTimeout(el._longPressTimer);
+        el._longPressTimer = setTimeout(() => {
+          el._longPressTimer = null;
           if (_lpCanceled) return;
           _lpCanceled = true;  // suppress the subsequent click-through
           try { menuBtn.click(); } catch {}
         }, 500);
       };
       const _lpCancel = () => {
-        if (_lpTimer) { clearTimeout(_lpTimer); _lpTimer = null; }
+        if (el._longPressTimer) { clearTimeout(el._longPressTimer); el._longPressTimer = null; }
       };
       const _lpMove = (e) => {
         const y = (e.touches?.[0]?.clientY) ?? 0;
@@ -2698,7 +2749,7 @@ export function _renderRunningTab() {
             const baseUrl = `http://${host}:${port}/v1`;
             try {
               // Check existing first — offer to overwrite if present
-              const eps = await (await fetch('/api/model-endpoints', { credentials: 'same-origin' })).json();
+              const eps = await (await _fetchWithTimeout('/api/model-endpoints', { credentials: 'same-origin' })).json();
               const existing = eps.find(e => e.base_url === baseUrl);
               if (existing) {
                 uiModule.showToast(`Already registered as "${existing.name}"`);
@@ -2717,7 +2768,7 @@ export function _renderRunningTab() {
               fd.append('skip_probe', 'true');
               _appendCookbookEndpointScope(fd, task.remoteHost || '');
               if (_isImageServeTask(task)) fd.append('model_type', 'image');
-              const res = await fetch('/api/model-endpoints', { method: 'POST', credentials: 'same-origin', body: fd });
+              const res = await _fetchWithTimeout('/api/model-endpoints', { method: 'POST', credentials: 'same-origin', body: fd });
               if (res.ok) {
                 task._endpointAdded = true;
                 _updateTask(task.sessionId, { _endpointAdded: true });
@@ -2929,7 +2980,7 @@ export function _renderRunningTab() {
       const ollamaUnload = _ollamaUnloadCommand(task, outputText);
       if (ollamaUnload) {
         try {
-          await fetch('/api/shell/exec', {
+          await _fetchWithTimeout('/api/shell/exec', {
             method: 'POST', credentials: 'same-origin',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ command: ollamaUnload }),
@@ -2938,7 +2989,7 @@ export function _renderRunningTab() {
       }
       // Gracefully stop (C-c, then kill the session) so it's fully down...
       try {
-        await fetch('/api/shell/exec', {
+        await _fetchWithTimeout('/api/shell/exec', {
           method: 'POST', credentials: 'same-origin',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ command: _tmuxGracefulKill(task) }),
@@ -2960,7 +3011,7 @@ export function _renderRunningTab() {
       const ollamaUnload = _ollamaUnloadCommand(task, outputText);
       if (ollamaUnload) {
         try {
-          await fetch('/api/shell/exec', {
+          await _fetchWithTimeout('/api/shell/exec', {
             method: 'POST', credentials: 'same-origin',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ command: ollamaUnload }),
@@ -2969,7 +3020,7 @@ export function _renderRunningTab() {
       }
       let killOk = true;
       try {
-        const r = await fetch('/api/shell/exec', {
+        const r = await _fetchWithTimeout('/api/shell/exec', {
           method: 'POST', credentials: 'same-origin',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ command: _tmuxGracefulKill(task) }),
@@ -2980,7 +3031,7 @@ export function _renderRunningTab() {
           // there was nothing to kill. Verify the session is actually gone.
           if (task.sessionId && isLive) {
             try {
-              const probe = await fetch('/api/shell/exec', {
+              const probe = await _fetchWithTimeout('/api/shell/exec', {
                 method: 'POST', credentials: 'same-origin',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ command: _tmuxCmd(task, `has-session -t ${task.sessionId}`) }),
@@ -3098,7 +3149,7 @@ async function _reconnectTask(el, task) {
       break;
     }
     try {
-      const res = await fetch('/api/shell/exec', {
+      const res = await _fetchWithTimeout('/api/shell/exec', {
         method: 'POST', credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json' },
         signal: controller.signal,
@@ -3113,7 +3164,7 @@ async function _reconnectTask(el, task) {
           continue;
         }
         try {
-          const verify = await fetch('/api/shell/exec', {
+          const verify = await _fetchWithTimeout('/api/shell/exec', {
             method: 'POST', credentials: 'same-origin',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ command: _tmuxCmd(task, `has-session -t ${task.sessionId}`) }),
@@ -3312,7 +3363,7 @@ async function _reconnectTask(el, task) {
                   if (!fresh) return;
                   let stillAlive = false;
                   try {
-                    const probe = await fetch('/api/shell/exec', {
+                    const probe = await _fetchWithTimeout('/api/shell/exec', {
                       method: 'POST', credentials: 'same-origin',
                       headers: { 'Content-Type': 'application/json' },
                       body: JSON.stringify({ command: _tmuxCmd(task, `has-session -t ${task.sessionId}`), timeout: 5 }),
@@ -3431,7 +3482,7 @@ async function _reconnectTask(el, task) {
               badge.className = 'cookbook-task-status cookbook-task-error';
               _showCookbookNotif(true);
               try {
-                await fetch('/api/shell/exec', {
+                await _fetchWithTimeout('/api/shell/exec', {
                   method: 'POST', credentials: 'same-origin',
                   headers: { 'Content-Type': 'application/json' },
                   body: JSON.stringify({ command: _tmuxCmd(task, `kill-session -t ${task.sessionId}`) }),
@@ -3449,7 +3500,7 @@ async function _reconnectTask(el, task) {
                 // Don't overwrite env_prefix — task.payload already has the correct
                 // "source <path>" form. The bare envPath would miss the `source` and
                 // the venv never activates (so hf CLI falls off PATH).
-                const res = await fetch('/api/model/download', {
+                const res = await _fetchWithTimeout('/api/model/download', {
                   method: 'POST', credentials: 'same-origin',
                   headers: { 'Content-Type': 'application/json' },
                   body: JSON.stringify(dlPayload),
@@ -3546,7 +3597,7 @@ async function _reconnectTask(el, task) {
                 uiModule.showToast(`Download interrupted — retrying (${_dlN + 1}/${_DL_MAX_AUTO_RETRY}), resumes where it stopped…`, 6000);
                 const _p = task.payload, _nm = task.name;
                 try {
-                  await fetch('/api/shell/exec', {
+                  await _fetchWithTimeout('/api/shell/exec', {
                     method: 'POST', credentials: 'same-origin',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ command: _tmuxCmd(task, `kill-session -t ${task.sessionId}`) }),
@@ -3588,7 +3639,7 @@ async function _reconnectTask(el, task) {
               const _sb2 = el.querySelector('.cookbook-task-serve-btn'); if (_sb2) _sb2.style.display = '';
               _showCookbookNotif();
               _refreshDepsAfterInstall(task);
-              fetch('/api/shell/exec', {
+              _fetchWithTimeout('/api/shell/exec', {
                 method: 'POST', credentials: 'same-origin',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ command: _tmuxCmd(task, `kill-session -t ${task.sessionId}`) }),
@@ -3672,7 +3723,7 @@ async function _reconnectTask(el, task) {
             const endpoint = _endpointFromAdvertisedUrl(ollamaUrlMatch[1], host, '11434');
             if (endpoint) ({ host, port, baseUrl } = endpoint);
           }
-          fetch('/api/model-endpoints', { credentials: 'same-origin' })
+          _fetchWithTimeout('/api/model-endpoints', { credentials: 'same-origin' })
             .then(r => r.json())
             .then(async (eps) => {
               // Match only exact base_url — don't dedup by friendly name,
@@ -3705,7 +3756,7 @@ async function _reconnectTask(el, task) {
               _appendCookbookEndpointScope(fd, task.remoteHost || '');
               _appendPinnedServeModel(fd, task);
               if (_isDiffusion) fd.append('model_type', 'image');
-              return fetch('/api/model-endpoints', { method: 'POST', credentials: 'same-origin', body: fd });
+              return _fetchWithTimeout('/api/model-endpoints', { method: 'POST', credentials: 'same-origin', body: fd });
             })
             .then(async (res) => {
               if (res && res.ok) {
@@ -3856,6 +3907,16 @@ function _canBackgroundPoll() {
   return _claimBackgroundLeader();
 }
 
+// Remote status and endpoint probes can hang while a host is waking up or
+// unreachable. Bound each background request so one socket cannot hold the
+// monitor's in-flight lock forever.
+function _fetchWithTimeout(input, init = {}, timeoutMs = 15000) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  return fetch(input, { ...init, signal: controller.signal })
+    .finally(() => clearTimeout(timer));
+}
+
 // Reachability check for running serve tasks. The tmux pane can stay alive
 // while the model server inside it has crashed (so no "Process exited" line
 // ever appears) — leaving the card showing "running" forever. So we actively
@@ -3886,8 +3947,8 @@ async function _checkServeReachability() {
   let eps = [], probe = {};
   try {
     [eps, probe] = await Promise.all([
-      fetch('/api/model-endpoints', { credentials: 'same-origin' }).then(r => r.json()).catch(() => []),
-      fetch('/api/model-endpoints/probe-local', { credentials: 'same-origin' }).then(r => r.json()).catch(() => ({})),
+      _fetchWithTimeout('/api/model-endpoints', { credentials: 'same-origin' }).then(r => r.json()).catch(() => []),
+      _fetchWithTimeout('/api/model-endpoints/probe-local', { credentials: 'same-origin' }, 20000).then(r => r.json()).catch(() => ({})),
     ]);
     for (const task of serveTasks) {
       const host = _connectHostFromRemote(task.remoteHost);
@@ -4014,7 +4075,8 @@ function _refreshServerDots() {
 // time-throttled inside (background-monitor path).
 let _selfHealRan = false;
 let _selfHealLastTs = 0;
-export async function _selfHealStaleTasks(opts = {}) {
+let _selfHealInFlight = null;
+async function _selfHealStaleTasksImpl(opts = {}) {
   // Open-path call: one-shot per page load.
   if (opts.oneShot) {
     if (_selfHealRan) return;
@@ -4049,7 +4111,7 @@ export async function _selfHealStaleTasks(opts = {}) {
   let flipped = 0;
   for (const t of candidates) {
     try {
-      const res = await fetch('/api/shell/exec', {
+      const res = await _fetchWithTimeout('/api/shell/exec', {
         method: 'POST', credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ command: _tmuxCmd(t, `has-session -t ${t.sessionId}`), timeout: 5 }),
@@ -4083,6 +4145,16 @@ export async function _selfHealStaleTasks(opts = {}) {
     console.log(`[cookbook] auto-reconnect: revived ${flipped} task(s) whose tmux session was still alive`);
     _renderRunningTab();
   }
+}
+
+export function _selfHealStaleTasks(opts = {}) {
+  if (_selfHealInFlight) return _selfHealInFlight;
+  const run = _selfHealStaleTasksImpl(opts);
+  const tracked = run.finally(() => {
+    if (_selfHealInFlight === tracked) _selfHealInFlight = null;
+  });
+  _selfHealInFlight = tracked;
+  return tracked;
 }
 
 export function _startBackgroundMonitor() {
@@ -4135,10 +4207,10 @@ async function _probeEndpointUntilOnline(epId, host, port) {
     try {
       // Hit the probe endpoint — it re-probes server-side and updates
       // cached_models. We consume (and discard) the SSE stream.
-      const probeRes = await fetch(`/api/model-endpoints/${epId}/probe`, { credentials: 'same-origin' }).catch(() => null);
+      const probeRes = await _fetchWithTimeout(`/api/model-endpoints/${epId}/probe`, { credentials: 'same-origin' }, 20000).catch(() => null);
       if (probeRes && probeRes.status === 404) return;
       if (probeRes) await probeRes.text().catch(() => {});
-      const eps = await fetch('/api/model-endpoints', { credentials: 'same-origin' }).then(r => r.json()).catch(() => []);
+      const eps = await _fetchWithTimeout('/api/model-endpoints', { credentials: 'same-origin' }).then(r => r.json()).catch(() => []);
       const ep = (eps || []).find(e => e.id === epId);
       if (ep && (ep.models || []).length) {
         if (window.modelsModule?.refreshModels) await window.modelsModule.refreshModels(false);
@@ -4161,7 +4233,7 @@ async function _pollBackgroundStatus() {
     // yet (e.g. agent-spawned downloads/serves). Without this merge,
     // _syncToServer keeps clobbering server-added tasks on every poll.
     try {
-      const stateRes = await fetch('/api/cookbook/state', { credentials: 'same-origin' });
+      const stateRes = await _fetchWithTimeout('/api/cookbook/state', { credentials: 'same-origin' });
       if (stateRes.ok) {
         const serverState = await stateRes.json();
         const serverTasks = (serverState && Array.isArray(serverState.tasks)) ? serverState.tasks : [];
@@ -4184,7 +4256,7 @@ async function _pollBackgroundStatus() {
       }
     } catch (_) { /* non-fatal */ }
 
-    const res = await fetch('/api/cookbook/tasks/status', { credentials: 'same-origin' });
+    const res = await _fetchWithTimeout('/api/cookbook/tasks/status', { credentials: 'same-origin' }, 30000);
     if (!res.ok) return;
     const data = await res.json();
     const tasks = data.tasks || [];
@@ -4343,7 +4415,7 @@ async function _pollBackgroundStatus() {
       const _cmd = localTask?.payload?._cmd || '';
       const _supportsTools = _cmd.includes('--enable-auto-tool-choice') || _isDiffusion === false && /(?:^|\s)(?:deepseek|gpt-[45o]|claude|gemini|qwen3|qwen2\.5|mixtral|llama-[34]|minimax|kimi|hermes|glm-4)/i.test(t.model);
 
-      fetch('/api/model-endpoints', { credentials: 'same-origin' })
+      _fetchWithTimeout('/api/model-endpoints', { credentials: 'same-origin' })
         .then(r => r.json())
         .then(eps => {
           const hostPort = `${host}:${port}`;
@@ -4369,7 +4441,7 @@ async function _pollBackgroundStatus() {
           _appendPinnedServeModel(fd, localTask || { name: t.model, model: t.model, payload: { repo_id: t.model, _cmd } });
           if (_isDiffusion) fd.append('model_type', 'image');
           if (_supportsTools) fd.append('supports_tools', 'true');
-          return fetch('/api/model-endpoints', { method: 'POST', credentials: 'same-origin', body: fd });
+          return _fetchWithTimeout('/api/model-endpoints', { method: 'POST', credentials: 'same-origin', body: fd });
         })
         .then(async (res) => {
           if (res && res.ok) {

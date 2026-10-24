@@ -78,7 +78,7 @@ def test_terminal_poll_can_reattach_same_card_after_hiding():
       function _isRunningTabVisible() { return visible; }
       function _tmuxCmd() { return 'capture'; }
       const TASK_POLL_INTERVAL_MS = 1;
-      async function fetch() { calls++; visible = false; return {json: async () => ({exit_code: 0, stdout: ''})}; }
+      async function _fetchWithTimeout() { calls++; visible = false; return {json: async () => ({exit_code: 0, stdout: ''})}; }
       await _reconnectTask(el, {sessionId: 'serve-test'});
       visible = true;
       await _reconnectTask(el, {sessionId: 'serve-test'});
@@ -137,7 +137,8 @@ def test_local_serve_rechecks_stale_stopped_state_and_respects_exit(monkeypatch,
 
 def test_picker_live_probe_overrides_stale_inventory_availability():
     source = (ROOT / 'static/js/modelPicker.js').read_text()
-    function = 'function _getAllModels(' + source.split('function _getAllModels(', 1)[1].split('\n  function ', 1)[0]
+    key_function = 'function _pickerModelKey(' + source.split('function _pickerModelKey(', 1)[1].split('\n}', 1)[0] + '\n}'
+    function = key_function + '\n' + 'function _getAllModels(' + source.split('function _getAllModels(', 1)[1].split('\n  function ', 1)[0]
     script = '''
       let _localProbe = {};
       let item = {endpoint_id:'local', category:'local', models:['model'], offline:true};

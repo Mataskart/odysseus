@@ -53,5 +53,9 @@ timetree*.png
 *_calendar_view.png
 .gitignore
 
-# Private exported conversations and reviewed training candidates
-local_finetune/seed_chats/
+# Local training code, private conversations, evaluations, and model artifacts
+/local_finetune/
+
+# Include distribution notices despite the general documentation exclusion.
+!ACKNOWLEDGMENTS.md
+!services/hwfit/data/README.md

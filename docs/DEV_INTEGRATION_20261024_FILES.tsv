@@ -1,0 +1,108 @@
+path	branch_preservation	audit_scope
+.dockerignore	reconciled with dev; see commit ledger and validation	Both parent diffs; integration contracts and focused/full suite; see commit ledger
+.gitignore	reconciled with dev; see commit ledger and validation	Both parent diffs; integration contracts and focused/full suite; see commit ledger
+core/session_manager.py	reconciled with dev; see commit ledger and validation	Both parent diffs; integration contracts and focused/full suite; see commit ledger
+local_finetune/RUNBOOK.md	byte-identical to branch; protected training file	Git object comparison only; no execution or data inspection
+local_finetune/check_template.py	byte-identical to branch; protected training file	Git object comparison only; no execution or data inspection
+local_finetune/eval_prompts.jsonl	byte-identical to branch; protected training file	Git object comparison only; no execution or data inspection
+local_finetune/seed_tasks.jsonl	byte-identical to branch; protected training file	Git object comparison only; no execution or data inspection
+local_finetune/setup_remote.sh	byte-identical to branch; protected training file	Git object comparison only; no execution or data inspection
+local_finetune/teacher_prompt.txt	byte-identical to branch; protected training file	Git object comparison only; no execution or data inspection
+local_finetune/train_lora.py	byte-identical to branch; protected training file	Git object comparison only; no execution or data inspection
+local_finetune/validate_dataset.py	byte-identical to branch; protected training file	Git object comparison only; no execution or data inspection
+routes/chat_helpers.py	reconciled with dev; see commit ledger and validation	Both parent diffs; integration contracts and focused/full suite; see commit ledger
+routes/chat_routes.py	reconciled with dev; see commit ledger and validation	Both parent diffs; integration contracts and focused/full suite; see commit ledger
+routes/cookbook_helpers.py	reconciled with dev; see commit ledger and validation	Both parent diffs; integration contracts and focused/full suite; see commit ledger
+routes/cookbook_routes.py	reconciled with dev; see commit ledger and validation	Both parent diffs; integration contracts and focused/full suite; see commit ledger
+routes/diagnostics_routes.py	byte-identical to branch	Unchanged implementation; integration callers and focused/full suite
+routes/history/history_routes.py	reconciled with dev; see commit ledger and validation	Both parent diffs; integration contracts and focused/full suite; see commit ledger
+routes/model_routes.py	reconciled with dev; see commit ledger and validation	Both parent diffs; integration contracts and focused/full suite; see commit ledger
+services/search/core.py	reconciled with dev; see commit ledger and validation	Both parent diffs; integration contracts and focused/full suite; see commit ledger
+services/search/providers.py	reconciled with dev; see commit ledger and validation	Both parent diffs; integration contracts and focused/full suite; see commit ledger
+specs/documents-rag-uploads.md	reconciled with dev; see commit ledger and validation	Both parent diffs; integration contracts and focused/full suite; see commit ledger
+specs/openjev.md	byte-identical to branch	Unchanged implementation; integration callers and focused/full suite
+specs/study-chat-failures-handoff.md	byte-identical to branch	Unchanged implementation; integration callers and focused/full suite
+specs/study-chat-failures-validation.md	byte-identical to branch	Unchanged implementation; integration callers and focused/full suite
+specs/tool-discovery.md	byte-identical to branch	Unchanged implementation; integration callers and focused/full suite
+src/action_intents.py	reconciled with dev; see commit ledger and validation	Both parent diffs; integration contracts and focused/full suite; see commit ledger
+src/agent_loop.py	reconciled with dev; see commit ledger and validation	Both parent diffs; integration contracts and focused/full suite; see commit ledger
+src/agent_tools/__init__.py	reconciled with dev; see commit ledger and validation	Both parent diffs; integration contracts and focused/full suite; see commit ledger
+src/agent_tools/filesystem_tools.py	reconciled with dev; see commit ledger and validation	Both parent diffs; integration contracts and focused/full suite; see commit ledger
+src/chat_handler.py	reconciled with dev; see commit ledger and validation	Both parent diffs; integration contracts and focused/full suite; see commit ledger
+src/chat_processor.py	reconciled with dev; see commit ledger and validation	Both parent diffs; integration contracts and focused/full suite; see commit ledger
+src/constants.py	reconciled with dev; see commit ledger and validation	Both parent diffs; integration contracts and focused/full suite; see commit ledger
+src/context_compactor.py	reconciled with dev; see commit ledger and validation	Both parent diffs; integration contracts and focused/full suite; see commit ledger
+src/llm_core.py	reconciled with dev; see commit ledger and validation	Both parent diffs; integration contracts and focused/full suite; see commit ledger
+src/local_model_startup.py	byte-identical to branch	Unchanged implementation; integration callers and focused/full suite
+src/pending_action.py	reconciled with dev; see commit ledger and validation	Both parent diffs; integration contracts and focused/full suite; see commit ledger
+src/personal_docs.py	reconciled with dev; see commit ledger and validation	Both parent diffs; integration contracts and focused/full suite; see commit ledger
+src/planning_validation.py	byte-identical to branch	Unchanged implementation; integration callers and focused/full suite
+src/prompt_security.py	byte-identical to branch	Unchanged implementation; integration callers and focused/full suite
+src/rag_singleton.py	byte-identical to branch	Unchanged implementation; integration callers and focused/full suite
+src/rag_vector.py	byte-identical to branch	Unchanged implementation; integration callers and focused/full suite
+src/settings.py	reconciled with dev; see commit ledger and validation	Both parent diffs; integration contracts and focused/full suite; see commit ledger
+src/study_intent.py	byte-identical to branch	Unchanged implementation; integration callers and focused/full suite
+src/tool_approval_scopes.py	byte-identical to branch	Unchanged implementation; integration callers and focused/full suite
+src/tool_capabilities.py	reconciled with dev; see commit ledger and validation	Both parent diffs; integration contracts and focused/full suite; see commit ledger
+src/tool_execution.py	reconciled with dev; see commit ledger and validation	Both parent diffs; integration contracts and focused/full suite; see commit ledger
+src/tool_index.py	reconciled with dev; see commit ledger and validation	Both parent diffs; integration contracts and focused/full suite; see commit ledger
+src/tool_loop_guard.py	byte-identical to branch	Unchanged implementation; integration callers and focused/full suite
+src/tool_parsing.py	reconciled with dev; see commit ledger and validation	Both parent diffs; integration contracts and focused/full suite; see commit ledger
+src/tool_policy.py	reconciled with dev; see commit ledger and validation	Both parent diffs; integration contracts and focused/full suite; see commit ledger
+src/tool_schemas.py	reconciled with dev; see commit ledger and validation	Both parent diffs; integration contracts and focused/full suite; see commit ledger
+src/tool_security.py	reconciled with dev; see commit ledger and validation	Both parent diffs; integration contracts and focused/full suite; see commit ledger
+src/tools/discovery.py	byte-identical to branch	Unchanged implementation; integration callers and focused/full suite
+src/tools/knowledge.py	byte-identical to branch	Unchanged implementation; integration callers and focused/full suite
+src/tools/openjev.py	byte-identical to branch	Unchanged implementation; integration callers and focused/full suite
+src/turn_log.py	byte-identical to branch	Unchanged implementation; integration callers and focused/full suite
+static/app.js	reconciled with dev; see commit ledger and validation	Both parent diffs; integration contracts and focused/full suite; see commit ledger
+static/index.html	reconciled with dev; see commit ledger and validation	Both parent diffs; integration contracts and focused/full suite; see commit ledger
+static/js/chat.js	reconciled with dev; see commit ledger and validation	Both parent diffs; integration contracts and focused/full suite; see commit ledger
+static/js/chatRenderer.js	reconciled with dev; see commit ledger and validation	Both parent diffs; integration contracts and focused/full suite; see commit ledger
+static/js/compare/index.js	reconciled with dev; see commit ledger and validation	Both parent diffs; integration contracts and focused/full suite; see commit ledger
+static/js/compare/stream.js	reconciled with dev; see commit ledger and validation	Both parent diffs; integration contracts and focused/full suite; see commit ledger
+static/js/cookbook.js	reconciled with dev; see commit ledger and validation	Both parent diffs; integration contracts and focused/full suite; see commit ledger
+static/js/cookbookRunning.js	reconciled with dev; see commit ledger and validation	Both parent diffs; integration contracts and focused/full suite; see commit ledger
+static/js/cookbookServe.js	reconciled with dev; see commit ledger and validation	Both parent diffs; integration contracts and focused/full suite; see commit ledger
+static/js/localModelStartup.js	byte-identical to branch	Unchanged implementation; integration callers and focused/full suite
+static/js/modelPicker.js	reconciled with dev; see commit ledger and validation	Both parent diffs; integration contracts and focused/full suite; see commit ledger
+static/js/slashCommands.js	reconciled with dev; see commit ledger and validation	Both parent diffs; integration contracts and focused/full suite; see commit ledger
+static/js/ui.js	reconciled with dev; see commit ledger and validation	Both parent diffs; integration contracts and focused/full suite; see commit ledger
+static/sw.js	reconciled with dev; see commit ledger and validation	Both parent diffs; integration contracts and focused/full suite; see commit ledger
+tests/helpers/embedding_lanes.py	byte-identical to branch	Parent-diff assertions and fixtures; focused/full suite
+tests/test_agent_rounds_exhausted.py	reconciled with dev; see commit ledger and validation	Parent-diff assertions and fixtures; focused/full suite
+tests/test_bg_job_tools.py	reconciled with dev; see commit ledger and validation	Parent-diff assertions and fixtures; focused/full suite
+tests/test_brave_search_request.py	byte-identical to branch	Parent-diff assertions and fixtures; focused/full suite
+tests/test_chat_preparation_spinner_js.py	byte-identical to branch	Parent-diff assertions and fixtures; focused/full suite
+tests/test_chat_processor_web_search.py	byte-identical to branch	Parent-diff assertions and fixtures; focused/full suite
+tests/test_code_nav_tools.py	reconciled with dev; see commit ledger and validation	Parent-diff assertions and fixtures; focused/full suite
+tests/test_context_tool_loop_trimming.py	byte-identical to branch	Parent-diff assertions and fixtures; focused/full suite
+tests/test_cookbook_cpu_only_serve.py	byte-identical to branch	Parent-diff assertions and fixtures; focused/full suite
+tests/test_cookbook_drafter_selection_js.py	byte-identical to branch	Parent-diff assertions and fixtures; focused/full suite
+tests/test_cookbook_helpers.py	byte-identical to branch	Parent-diff assertions and fixtures; focused/full suite
+tests/test_cookbook_inventory_regressions.py	reconciled with dev; see commit ledger and validation	Parent-diff assertions and fixtures; focused/full suite
+tests/test_diagnostics_service_route.py	byte-identical to branch	Parent-diff assertions and fixtures; focused/full suite
+tests/test_external_context_tool_gate.py	reconciled with dev; see commit ledger and validation	Parent-diff assertions and fixtures; focused/full suite
+tests/test_foreground_model_routing.py	reconciled with dev; see commit ledger and validation	Parent-diff assertions and fixtures; focused/full suite
+tests/test_knowledge_tool.py	byte-identical to branch	Parent-diff assertions and fixtures; focused/full suite
+tests/test_llm_core_streaming.py	reconciled with dev; see commit ledger and validation	Parent-diff assertions and fixtures; focused/full suite
+tests/test_local_model_startup.py	byte-identical to branch	Parent-diff assertions and fixtures; focused/full suite
+tests/test_local_tool_stall.py	byte-identical to branch	Parent-diff assertions and fixtures; focused/full suite
+tests/test_model_routes.py	reconciled with dev; see commit ledger and validation	Parent-diff assertions and fixtures; focused/full suite
+tests/test_openjev_tool.py	reconciled with dev; see commit ledger and validation	Parent-diff assertions and fixtures; focused/full suite
+tests/test_personal_docs_keyword_fallback.py	byte-identical to branch	Parent-diff assertions and fixtures; focused/full suite
+tests/test_qwen_sampling_defaults.py	byte-identical to branch	Parent-diff assertions and fixtures; focused/full suite
+tests/test_qwen_xml_tool_calls.py	byte-identical to branch	Parent-diff assertions and fixtures; focused/full suite
+tests/test_rag_shared_documents.py	byte-identical to branch	Parent-diff assertions and fixtures; focused/full suite
+tests/test_repeated_read_guard.py	reconciled with dev; see commit ledger and validation	Parent-diff assertions and fixtures; focused/full suite
+tests/test_review_flag_js.py	byte-identical to branch	Parent-diff assertions and fixtures; focused/full suite
+tests/test_runtime_retry_progress.py	byte-identical to branch	Parent-diff assertions and fixtures; focused/full suite
+tests/test_study_chat_recovery.py	byte-identical to branch	Parent-diff assertions and fixtures; focused/full suite
+tests/test_study_chat_retrieval.py	byte-identical to branch	Parent-diff assertions and fixtures; focused/full suite
+tests/test_study_planning_constraints.py	byte-identical to branch	Parent-diff assertions and fixtures; focused/full suite
+tests/test_token_cache_atomic_swap.py	reconciled with dev; see commit ledger and validation	Parent-diff assertions and fixtures; focused/full suite
+tests/test_tool_approval_frontend_routing.py	reconciled with dev; see commit ledger and validation	Parent-diff assertions and fixtures; focused/full suite
+tests/test_tool_approval_task_scope.py	reconciled with dev; see commit ledger and validation	Parent-diff assertions and fixtures; focused/full suite
+tests/test_tool_discovery.py	reconciled with dev; see commit ledger and validation	Parent-diff assertions and fixtures; focused/full suite
+tests/test_turn_review_identity.py	byte-identical to branch	Parent-diff assertions and fixtures; focused/full suite
+tests/test_workspace_confine.py	reconciled with dev; see commit ledger and validation	Parent-diff assertions and fixtures; focused/full suite

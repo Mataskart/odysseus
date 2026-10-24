@@ -51,7 +51,8 @@ def test_discovery_validates_arguments(content):
     assert result['exit_code'] == 1
 
 
-def test_discovery_recovers_missing_file_tools_in_real_loop(monkeypatch):
+@pytest.mark.parametrize("use_contract", [False, True])
+def test_discovery_recovers_missing_file_tools_in_real_loop(monkeypatch, use_contract):
     import src.agent_loop as al
     set_index(monkeypatch, ['bash', 'read_file'])
     monkeypatch.setattr(al, 'get_setting', lambda key, default=None: default)
@@ -87,11 +88,19 @@ def test_discovery_recovers_missing_file_tools_in_real_loop(monkeypatch):
     monkeypatch.setattr(al, 'execute_tool_block', execute)
     monkeypatch.setattr(al, 'stream_llm_with_fallback', stream)
 
+    from src.turn_contract import resolve_turn_contract
+    from src.tool_policy import ToolPolicy
+    contract = resolve_turn_contract(
+        capabilities={"documents"}, schemas=FUNCTION_TOOL_SCHEMAS,
+        policy=ToolPolicy(disabled_tools=frozenset({"bash"})),
+        selected_tools={"suggest_document"}, always_available_tools={"find_tools"},
+    ) if use_contract else None
+
     async def run():
         return [chunk async for chunk in al.stream_agent_loop(
             'http://127.0.0.1:8000/v1', 'Qwen3.8-35B',
             [{'role': 'user', 'content': "OK so look at what it's currently set up to do and suggest improvements for the RAG pipeline"}],
-            relevant_tools={'suggest_document'}, disabled_tools={'bash'},
+            relevant_tools={'suggest_document'}, disabled_tools={'bash'}, turn_contract=contract,
             max_rounds=4, log_turns=False, _is_teacher_run=True,
         )]
     events = asyncio.run(run())

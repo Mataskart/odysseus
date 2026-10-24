@@ -10,9 +10,11 @@ import logging
 import re
 from typing import Any, Dict, List, Optional
 
-from src.model_context import get_context_length, estimate_tokens
+from src.model_context import estimate_text_tokens, get_context_length, estimate_tokens
 from src.llm_core import llm_call_async
 from src.endpoint_resolver import resolve_endpoint
+from src.utility_effort import effort_for_call
+from src.settings import get_setting
 from core.models import ChatMessage
 
 logger = logging.getLogger(__name__)
@@ -41,9 +43,71 @@ def _content_as_text(content: Any) -> str:
     return ""
 
 
+_MULTIMODAL_IMAGE_TYPES = {"image_url", "input_image", "image"}
+
+
+def prune_multimodal_images(
+    messages: List[Dict],
+    *,
+    max_images: int = 8,
+) -> List[Dict]:
+    """Keep uniformly sampled visual blocks across a multimodal history."""
+
+    image_locations = []
+    for message_index, message in enumerate(messages):
+        content = message.get("content") if isinstance(message, dict) else None
+        if not isinstance(content, list):
+            continue
+        for content_index, item in enumerate(content):
+            if isinstance(item, dict) and item.get("type") in _MULTIMODAL_IMAGE_TYPES:
+                image_locations.append((message_index, content_index))
+
+    limit = max(0, int(max_images))
+    if len(image_locations) <= limit:
+        return list(messages)
+    if limit == 0:
+        selected = set()
+    elif limit == 1:
+        selected = {image_locations[-1]}
+    else:
+        last = len(image_locations) - 1
+        selected = {
+            image_locations[round(index * last / (limit - 1))]
+            for index in range(limit)
+        }
+
+    pruned = []
+    for message_index, message in enumerate(messages):
+        if not isinstance(message, dict):
+            pruned.append(message)
+            continue
+        cloned = dict(message)
+        content = message.get("content")
+        if isinstance(content, list):
+            cloned["content"] = [
+                item for content_index, item in enumerate(content)
+                if not (
+                    isinstance(item, dict)
+                    and item.get("type") in _MULTIMODAL_IMAGE_TYPES
+                    and (message_index, content_index) not in selected
+                )
+            ]
+        pruned.append(cloned)
+    return pruned
+
+
 COMPACT_THRESHOLD = 0.85  # Trigger compaction at 85% of context window
 SUMMARY_MAX_TOKENS = 1024
 SMALL_CONTEXT_LIMIT = 8192  # Models with context <= this get aggressive trimming
+
+
+def auto_compact_threshold_percent() -> int:
+    """Configured auto-compaction threshold, clamped to a sane UI range."""
+    try:
+        value = int(get_setting("auto_compact_threshold_percent", int(COMPACT_THRESHOLD * 100)) or 85)
+    except (TypeError, ValueError):
+        value = int(COMPACT_THRESHOLD * 100)
+    return max(50, min(95, value))
 
 # Cursor-style self-summarization prompt — produces structured, dense summaries
 SELF_SUMMARY_SYSTEM_PROMPT = """You are summarizing a conversation to preserve context after compaction. Produce a structured summary that lets the conversation continue seamlessly.
@@ -132,26 +196,38 @@ def _sanitize_tool_messages(msgs: List[Dict]) -> List[Dict]:
 def _message_text_token_estimate(text: str) -> int:
     if not isinstance(text, str):
         return 4
-    return int(len(text) * 0.3) + 4
+    return estimate_text_tokens(text) + 4
 
 
 def _truncate_text_to_token_budget(text: str, token_budget: int) -> str:
     if not isinstance(text, str):
         return ""
-    max_chars = max(0, int((token_budget - 4) / 0.3))
-    if len(text) <= max_chars:
+    if estimate_text_tokens(text) <= token_budget - 16:
         return text
     notice = (
         "\n\n[Notice: the pasted message was too large for this model's context "
         "window, so Odysseus kept the beginning and end.]\n\n"
     )
-    if max_chars <= len(notice):
-        return "[Content truncated for context]"[:max_chars]
-    keep_chars = max_chars - len(notice)
-    head_len = int(keep_chars * 0.7)
-    tail_len = keep_chars - head_len
-    tail = text[-tail_len:] if tail_len else ""
-    return text[:head_len] + notice + tail
+    budget = max(0, token_budget - 4)
+    if estimate_text_tokens(notice) > budget:
+        notice = "[Content truncated for context]"
+        while notice and estimate_text_tokens(notice) > budget:
+            notice = notice[:-1]
+        return notice
+    low, high = 0, len(text)
+    best = notice
+    while low <= high:
+        keep_chars = (low + high) // 2
+        head_len = int(keep_chars * 0.7)
+        tail_len = keep_chars - head_len
+        tail = text[-tail_len:] if tail_len else ""
+        candidate = text[:head_len] + notice + tail
+        if estimate_text_tokens(candidate) <= budget:
+            best = candidate
+            low = keep_chars + 1
+        else:
+            high = keep_chars - 1
+    return best
 
 
 def _truncate_tool_call_args(msg: Dict[str, Any], token_budget: int) -> Dict[str, Any]:
@@ -178,7 +254,7 @@ def _truncate_tool_call_args(msg: Dict[str, Any], token_budget: int) -> Dict[str
     for tc in tool_calls:
         fn = tc.get("function") if isinstance(tc, dict) else None
         args = fn.get("arguments") if isinstance(fn, dict) else None
-        if isinstance(args, str) and int(len(args) * 0.3) > per_call:
+        if isinstance(args, str) and estimate_text_tokens(args) > per_call:
             new_fn = dict(fn)
             new_fn["arguments"] = json.dumps({"_truncated_for_context": len(args)})
             new_tc = dict(tc)
@@ -211,7 +287,7 @@ def _truncate_message_to_token_budget(msg: Dict[str, Any], token_budget: int) ->
                 continue
             truncated = _truncate_text_to_token_budget(item.get("text", ""), remaining)
             new_content.append({**item, "text": truncated})
-            remaining -= int(len(truncated) * 0.3)
+            remaining -= _message_text_token_estimate(truncated)
         out["content"] = new_content
     return out
 
@@ -255,10 +331,29 @@ def trim_for_context(messages: List[Dict], context_length: int, reserve_tokens: 
     # metadata as essential alongside the leading system prompt.
     def _is_research_primer(m):
         return bool((m.get("metadata") or {}).get("research_spinoff_from"))
+
+    def _is_compaction_summary(m):
+        content = m.get("content")
+        return isinstance(content, str) and content.lstrip().startswith(
+            ("[Conversation summary", "Conversation Summary")
+        )
+
     _primers = [m for m in system_msgs if _is_research_primer(m)]
-    _non_primer = [m for m in system_msgs if not _is_research_primer(m)]
-    essential_system = (_non_primer[:1] if _non_primer else []) + _primers
-    extra_system = _non_primer[1:]
+    _summaries = [m for m in system_msgs if _is_compaction_summary(m)]
+    _non_essential = [
+        m for m in system_msgs
+        if not _is_research_primer(m) and not _is_compaction_summary(m)
+    ]
+    # The base prompt and the conversation summary are the minimum state
+    # needed to continue a task. Summaries used to be classified as ordinary
+    # extra system context, so a large route prompt could trim them away right
+    # after compaction and send the model the same lost-context request again.
+    essential_system = (
+        (_non_essential[:1] if _non_essential else [])
+        + _primers
+        + _summaries
+    )
+    extra_system = _non_essential[1:]
 
     # Try dropping extra system messages one by one (from the end)
     trimmed = essential_system + convo_msgs
@@ -284,9 +379,23 @@ def trim_for_context(messages: List[Dict], context_length: int, reserve_tokens: 
             if estimate_tokens(trimmed) <= budget:
                 return _sanitize_tool_messages(essential_system + protected_msgs + convo_msgs)
 
+    def _is_direct_user_message(message: Dict) -> bool:
+        # Qwen transports runtime corrections as user-role messages. Their
+        # server-owned provenance must not make them replace the real request
+        # as the protected tail's anchor. Never infer this from prompt wording.
+        if message.get("role") != "user" or message.get("_harness_control") or message.get("_agent_injected"):
+            return False
+        metadata = message.get("metadata") or {}
+        # Textual tool transports intentionally wrap external results as user
+        # messages. They are context for the request, not a new request.
+        return not (
+            metadata.get("trusted") is False
+            and bool(metadata.get("source"))
+        )
+
     # A user turn can span many assistant/tool rounds; its last message is often a tool result.
     latest_user = next(
-        (msg for msg in reversed(convo_msgs) if msg.get("role") == "user"),
+        (msg for msg in reversed(convo_msgs) if _is_direct_user_message(msg)),
         None,
     )
     groups = []
@@ -358,21 +467,51 @@ async def maybe_compact(
     *,
     persist: bool = True,
     compaction_state: Optional[Dict[str, Any]] = None,
+    deterministic: bool = False,
+    context_length: Optional[int] = None,
 ) -> tuple:
     """Check context usage and compact if above threshold.
 
+    ``context_length`` lets a caller that already resolved the turn's window
+    supply it, so this helper does not query the endpoint a second time.
+
     Returns (messages, context_length, was_compacted).
     """
-    context_length = get_context_length(endpoint_url, model)
+    if context_length is None:
+        context_length = get_context_length(endpoint_url, model)
     used = estimate_tokens(messages)
     pct = (used / context_length) * 100 if context_length else 0
+    threshold = auto_compact_threshold_percent()
 
-    if pct < COMPACT_THRESHOLD * 100:
+    if pct < threshold:
         return messages, context_length, False
 
     logger.info(
-        f"Context at {pct:.1f}% ({used}/{context_length} tokens) — compacting"
+        f"Context at {pct:.1f}% ({used}/{context_length} tokens, threshold={threshold}%) — compacting"
     )
+
+    if deterministic:
+        # Unattended workers must not compete with policy generation for the
+        # same saturated endpoint just to summarize their own transcript. Trim
+        # to 75% so the next tool round has useful headroom. This path is not
+        # persisted into interactive history and preserves the active request
+        # through trim_for_context's protected-tail rules.
+        reserve_tokens = max(512, int(context_length * 0.25))
+        compacted = trim_for_context(
+            messages,
+            context_length,
+            reserve_tokens=reserve_tokens,
+        )
+        changed = compacted != messages
+        if changed:
+            logger.info(
+                "Deterministically compacted: %s -> %s tokens (%s -> %s messages)",
+                used,
+                estimate_tokens(compacted),
+                len(messages),
+                len(compacted),
+            )
+        return compacted, context_length, changed
 
     # Split into system preface and conversation
     system_msgs = []
@@ -412,7 +551,13 @@ async def maybe_compact(
     )
 
     # Use utility model if configured, otherwise fall back to session model
-    util_url, util_model, util_headers = resolve_endpoint("utility", owner=owner)
+    util_url, util_model, util_headers = resolve_endpoint(
+        "utility",
+        fallback_url=endpoint_url,
+        fallback_model=model,
+        fallback_headers=headers,
+        owner=owner,
+    )
     compact_url = util_url or endpoint_url
     compact_model = util_model or model
     compact_headers = util_headers if util_url else headers
@@ -436,6 +581,7 @@ async def maybe_compact(
             max_tokens=SUMMARY_MAX_TOKENS,
             headers=compact_headers,
             timeout=30,
+            reasoning_effort=effort_for_call(compact_url, compact_model, owner, session),
         )
     except Exception as e:
         logger.error(f"Compaction summary failed: {e}")

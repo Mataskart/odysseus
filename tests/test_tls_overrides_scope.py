@@ -38,6 +38,7 @@ REPO = Path(__file__).resolve().parents[1]
 # come with its own justification in code review.
 ALLOWED_CALLERS = frozenset({
     "src/llm_core.py",          # shared AsyncClient used by stream_llm
+    "src/local_model_startup.py",  # readiness probes use the saved LLM provider endpoint
     "routes/model_routes.py",   # _probe_endpoint + _ping_endpoint
 })
 

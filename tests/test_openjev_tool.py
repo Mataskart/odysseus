@@ -47,7 +47,12 @@ def test_count_dispatch_keeps_fractional_score_separate_from_count(service, monk
     from src.tool_capabilities import ToolRunSecurityContext
     block = function_call_to_tool_block("openjev_judge", json.dumps(count_payload()))
     assert isinstance(block, ToolBlock)
-    _, result = asyncio.run(execute_tool_block(block, security_context=ToolRunSecurityContext()))
+    from src.agent_runtime.authority import create_request_authority
+    authority = create_request_authority("Use OpenJev to count the people present.")
+    _, result = asyncio.run(execute_tool_block(
+        block, security_context=ToolRunSecurityContext(), request_authority=authority,
+    ))
+    assert "answers" in result, result
     answer = result["answers"]["count"]
     assert answer["most_likely_level"] == 3
     assert answer["score"] == 2.7

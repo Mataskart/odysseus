@@ -29,10 +29,10 @@ def test_header_indicator_has_title_tooltip():
 def test_api_picker_dedupe_includes_endpoint_id():
     # API providers can expose the same model id intentionally. The chat picker
     # must not dedupe OpenRouter away just because OpenAI has the same id.
-    assert "const isApiEndpoint = item.category && item.category !== 'local';" in SRC
-    assert re.search(r"const seenKey = isApiEndpoint\s*\?", SRC), \
-        "chat picker should dedupe API models by endpoint+model, not model id only"
-    assert "${item.endpoint_id || item.url || item.endpoint_name || 'api'}::${mid}" in SRC
+    assert "const seenKey = _pickerModelKey({ endpointId: item.endpoint_id, url: item.url, epName: item.endpoint_name, mid })" in SRC
+    helper = SRC.split("function _pickerModelKey(", 1)[1].split("\n}", 1)[0]
+    assert "endpointId" in helper and "url" in helper
+    assert "m.mid" in helper
 
 
 def test_api_picker_groups_by_endpoint_name():

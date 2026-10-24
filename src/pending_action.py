@@ -53,6 +53,13 @@ def is_promise(text):
 def pending_document_objective(messages, latest):
     objective = None
     for message in messages:
+        if not isinstance(message, dict):
+            message = {key: getattr(message, key, None) for key in ("role", "content", "metadata")}
+        request_text = message.get("_agent_request_text")
+        if isinstance(request_text, str):
+            if latest == message.get("content"):
+                latest = request_text
+            message = {**message, "content": request_text}
         metadata = message.get("metadata") or {}
         if message.get("_agent_injected") or message.get("_untrusted_context") or metadata.get("trusted") is False:
             continue

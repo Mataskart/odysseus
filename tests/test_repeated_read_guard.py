@@ -111,7 +111,9 @@ def run_loop(monkeypatch, calls, results, user_text='Read the report', xml=False
     async def collect():
         return [chunk async for chunk in agent.stream_agent_loop(
             'http://127.0.0.1:8010/v1', 'Qwen3.8-v2', [{'role': 'user', 'content': user_text}],
-            relevant_tools={'read_file'}, disabled_tools={'find_tools'}, max_rounds=8,
+            relevant_tools={'read_file'},
+            disabled_tools={schema['function']['name'] for schema in agent.FUNCTION_TOOL_SCHEMAS} - {'read_file'},
+            max_rounds=8,
             log_turns=False, _is_teacher_run=True,
         )]
 
