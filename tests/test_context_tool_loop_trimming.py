@@ -129,11 +129,19 @@ def test_impossible_protected_context_fails_before_sending_oversized_request():
 
 
 @pytest.mark.parametrize("has_prior_turn", [False, True])
-def test_summarization_never_splits_the_active_tool_loop(monkeypatch, has_prior_turn):
+@pytest.mark.parametrize("injected_context", [
+    None,
+    {"_harness_control": True},
+    {"_agent_injected": "retrieval_status"},
+    {"metadata": {"trusted": False, "source": "tool output"}},
+])
+def test_summarization_never_splits_the_active_tool_loop(monkeypatch, has_prior_turn, injected_context):
     query = {"role": "user", "content": "CURRENT REQUEST"}
     active_turn = [query]
     for round_number in range(6):
         active_turn.extend(tool_round(round_number))
+        if injected_context:
+            active_turn.append({"role": "user", "content": "Runtime context", **injected_context})
     prior_turn = [
         {"role": "user", "content": "earlier request"},
         {"role": "assistant", "content": "earlier response"},

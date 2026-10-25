@@ -52,9 +52,10 @@ def test_discovery_validates_arguments(content):
 
 
 @pytest.mark.parametrize("use_contract", [False, True])
-def test_discovery_recovers_missing_file_tools_in_real_loop(monkeypatch, use_contract):
+@pytest.mark.parametrize("recovered_tool", ["read_file", "chat_with_model"])
+def test_discovery_recovers_missing_tools_in_real_loop(monkeypatch, use_contract, recovered_tool):
     import src.agent_loop as al
-    set_index(monkeypatch, ['bash', 'read_file'])
+    set_index(monkeypatch, ['bash', recovered_tool])
     monkeypatch.setattr(al, 'get_setting', lambda key, default=None: default)
     monkeypatch.setattr(al, 'get_mcp_manager', lambda: None)
     monkeypatch.setattr(al, 'blocked_tools_for_owner', lambda owner: set())
@@ -72,12 +73,16 @@ def test_discovery_recovers_missing_file_tools_in_real_loop(monkeypatch, use_con
         offered_rounds.append(offered)
         if len(offered_rounds) == 1:
             assert 'find_tools' in offered
-            assert 'read_file' not in offered
+            assert recovered_tool not in offered
             call = {'name': 'find_tools', 'arguments': json.dumps({'query': 'inspect OpenJev source files'})}
         elif len(offered_rounds) == 2:
-            assert 'read_file' in offered
+            assert recovered_tool in offered
             assert 'bash' not in offered
-            call = {'name': 'read_file', 'arguments': json.dumps({'path': 'specs/openjev.md'})}
+            if recovered_tool == 'read_file':
+                arguments = {'path': 'specs/openjev.md'}
+            else:
+                arguments = {'model': 'test', 'message': 'Review this configuration'}
+            call = {'name': recovered_tool, 'arguments': json.dumps(arguments)}
         else:
             yield 'data: ' + json.dumps({'delta': 'Suggestions based on the configuration.'}) + '\n\n'
             yield 'data: [DONE]\n\n'
@@ -105,5 +110,5 @@ def test_discovery_recovers_missing_file_tools_in_real_loop(monkeypatch, use_con
         )]
     events = asyncio.run(run())
     assert len(offered_rounds) == 3
-    assert executed == ['read_file']
+    assert executed == [recovered_tool]
     assert any('Suggestions based' in event for event in events)

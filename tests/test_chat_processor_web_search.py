@@ -1,5 +1,9 @@
-from unittest.mock import MagicMock
 from types import SimpleNamespace
+from unittest.mock import MagicMock
+
+import pytest
+
+from core.models import ChatMessage
 from src.chat_processor import ChatProcessor
 
 def test_build_context_preface_web_search_success(monkeypatch):
@@ -95,16 +99,17 @@ def test_build_context_preface_web_search_query_sanitization(monkeypatch):
     assert "  " not in called_query
 
 
-def test_search_query_extraction_sees_previous_exchange(monkeypatch):
+@pytest.mark.parametrize("message_type", [dict, ChatMessage])
+def test_search_query_extraction_sees_previous_exchange(monkeypatch, message_type):
     mock_llm_call = MagicMock(return_value="Kaunas castle ticket price")
     monkeypatch.setattr("src.llm_core.llm_call", mock_llm_call)
     monkeypatch.setattr("src.chat_processor.comprehensive_web_search", MagicMock(return_value=("", [])))
 
     processor = ChatProcessor(memory_manager=MagicMock(), personal_docs_manager=MagicMock())
     session = SimpleNamespace(endpoint_url="http://local", model="test", headers={}, history=[
-        {"role": "user", "content": "What is worth seeing in Kaunas?"},
-        {"role": "assistant", "content": "<think>plan</think>Kaunas Castle is a highlight."},
-        {"role": "user", "content": "and what about the price?"},
+        message_type(role="user", content="What is worth seeing in Kaunas?"),
+        message_type(role="assistant", content="<think>plan</think>Kaunas Castle is a highlight."),
+        message_type(role="user", content="and what about the price?"),
     ])
 
     processor.build_context_preface(

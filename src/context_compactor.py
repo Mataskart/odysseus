@@ -292,6 +292,14 @@ def _truncate_message_to_token_budget(msg: Dict[str, Any], token_budget: int) ->
     return out
 
 
+def _is_direct_user_message(message: Dict) -> bool:
+    # Runtime notes and textual tool results use user roles without starting a new turn.
+    if message.get("role") != "user" or message.get("_harness_control") or message.get("_agent_injected"):
+        return False
+    metadata = message.get("metadata") or {}
+    return not (metadata.get("trusted") is False and bool(metadata.get("source")))
+
+
 def trim_for_context(messages: List[Dict], context_length: int, reserve_tokens: int = 512) -> List[Dict]:
     """Trim system messages to fit within context_length.
 
@@ -378,20 +386,6 @@ def trim_for_context(messages: List[Dict], context_length: int, reserve_tokens: 
             trimmed = essential_system + convo_msgs
             if estimate_tokens(trimmed) <= budget:
                 return _sanitize_tool_messages(essential_system + protected_msgs + convo_msgs)
-
-    def _is_direct_user_message(message: Dict) -> bool:
-        # Qwen transports runtime corrections as user-role messages. Their
-        # server-owned provenance must not make them replace the real request
-        # as the protected tail's anchor. Never infer this from prompt wording.
-        if message.get("role") != "user" or message.get("_harness_control") or message.get("_agent_injected"):
-            return False
-        metadata = message.get("metadata") or {}
-        # Textual tool transports intentionally wrap external results as user
-        # messages. They are context for the request, not a new request.
-        return not (
-            metadata.get("trusted") is False
-            and bool(metadata.get("source"))
-        )
 
     # A user turn can span many assistant/tool rounds; its last message is often a tool result.
     latest_user = next(
@@ -529,7 +523,7 @@ async def maybe_compact(
     midpoint = len(convo_msgs) // 2
     user_boundaries = [
         index for index, msg in enumerate(convo_msgs)
-        if index > 0 and msg.get("role") == "user"
+        if index > 0 and _is_direct_user_message(msg)
     ]
     if not user_boundaries:
         return messages, context_length, False

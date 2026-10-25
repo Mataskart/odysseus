@@ -22546,6 +22546,7 @@ async def stream_agent_loop(
     # RAG-based tool selection: retrieve relevant tools for this query.
     # If caller provided a pre-computed set (e.g. task_scheduler), use that.
     caller_selected_tools = set(relevant_tools or ())
+    discovered_tools = set()
     _relevant_tools = None if relevant_tools is None else set(relevant_tools)
     if _ambiguous_short_turn and not forced_tools:
         # A host bridge or stale caller-provided tool set must not turn an
@@ -25207,7 +25208,7 @@ async def stream_agent_loop(
         # visibility is not authority: both the loop and dispatcher still gate
         # execution, and only a one-use server record can cross that boundary.
         declared_names = {schema["function"]["name"] for schema in normalized_external_tool_schemas}
-        selected_names = set(forced_tools or ()) | declared_names
+        selected_names = set(forced_tools or ()) | declared_names | discovered_tools
         deferred_allowed = _drop_deferred_tools(_DEFERRED_TOOL_TRIGGERS, _last_user) | selected_names
         return [schema for schema in schemas or ()
                 if (schema.get("function", {}).get("name", schema.get("name")) not in _DEFERRED_TOOL_TRIGGERS
@@ -33838,6 +33839,7 @@ async def stream_agent_loop(
 
             if block.tool_type == "find_tools" and not result.get("error"):
                 discovered = set(result.get("discovered_tools", [])) - disabled_tools
+                discovered_tools.update(discovered)
                 if _relevant_tools is not None:
                     _relevant_tools.update(discovered)
                 if _base_relevant_tools is not None:

@@ -91,10 +91,16 @@ _QUERY_CONTEXT_CHARS = 500
 
 def _search_query_request(message: str, session: Any) -> str:
     """The message plus the previous exchange, so follow-ups yield standalone queries."""
-    history = [
-        m for m in (getattr(session, "history", None) or [])
-        if isinstance(m, dict) and m.get("role") in {"user", "assistant"} and isinstance(m.get("content"), str)
-    ]
+    history = []
+    for message_entry in getattr(session, "history", None) or []:
+        if isinstance(message_entry, dict):
+            role = message_entry.get("role")
+            content = message_entry.get("content")
+        else:
+            role = getattr(message_entry, "role", None)
+            content = getattr(message_entry, "content", None)
+        if role in {"user", "assistant"} and isinstance(content, str):
+            history.append({"role": role, "content": content})
     if history and history[-1].get("role") == "user" and history[-1]["content"].strip() == message.strip():
         history = history[:-1]
     earlier = []
