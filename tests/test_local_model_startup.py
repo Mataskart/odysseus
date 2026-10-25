@@ -93,6 +93,27 @@ def test_manual_launch_remembered_without_token(tmp_path):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize('body', [
+    {'data': [{'id': 'org/model'}]},
+    [{'id': 'org/model'}],
+    {'models': [{'name': 'org/model'}]},
+])
+async def test_ensure_accepts_supported_model_catalogs_without_launching(tmp_path, monkeypatch, body):
+    import httpx
+
+    real_client = httpx.AsyncClient
+    transport = httpx.MockTransport(lambda request: httpx.Response(200, json=body))
+    monkeypatch.setattr(httpx, 'AsyncClient', lambda **kwargs: real_client(**kwargs, transport=transport))
+
+    async def launch(profile):
+        pytest.fail('An online endpoint must not be relaunched')
+
+    startup = LocalModelStartup(tmp_path / 'state.json', launch)
+    assert await startup.ensure(endpoint()) == {'status': 'ready'}
+    assert not startup.jobs
+
+
+@pytest.mark.asyncio
 async def test_probe_uses_real_tls_settings_and_handles_http_responses(tmp_path, monkeypatch):
     import httpx
     real_client = httpx.AsyncClient

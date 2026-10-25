@@ -1,6 +1,7 @@
 import json
 import subprocess
 import sys
+import pytest
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -9,6 +10,30 @@ from routes.model_routes import _picker_models_for_endpoint
 
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+@pytest.mark.asyncio
+async def test_hf_gguf_scan_returns_error_when_provider_is_unreachable(monkeypatch):
+    import httpx
+    import routes.cookbook_routes as cookbook
+
+    real_client = httpx.AsyncClient
+    requests = []
+
+    def unavailable(request):
+        requests.append(str(request.url))
+        raise httpx.ConnectError('offline', request=request)
+
+    transport = httpx.MockTransport(unavailable)
+    monkeypatch.setattr(httpx, 'AsyncClient', lambda **kwargs: real_client(**kwargs, transport=transport))
+    monkeypatch.setattr(cookbook, 'load_stored_hf_token', lambda **kwargs: '')
+    router = cookbook.setup_cookbook_routes()
+    route = next(route for route in router.routes if route.path == '/api/cookbook/hf-gguf-files')
+
+    assert await route.endpoint(repo_id='org/model', owner='alice') == {
+        'ok': False, 'files': [], 'error': 'HF API request failed',
+    }
+    assert requests == ['https://huggingface.co/api/models/org/model']
 
 
 def test_hf_scan_excludes_metadata_and_static_embeddings_without_deleting(tmp_path):

@@ -15073,10 +15073,7 @@ def _build_system_prompt(
             try:
                 from routes.prefs_routes import _load_for_user as _load_prefs
                 _prefs = _load_prefs(owner) or {}
-                _skills_on = (
-                    _prefs.get("skills_enabled", True)
-                    and getattr(history_session, "skill_injection_enabled", True) is not False
-                )
+                _skills_on = _prefs.get("skills_enabled", True)
             except Exception:
                 pass
             if (last_user or active_skill_names) and _skills_on:

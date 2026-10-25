@@ -88,11 +88,12 @@ class LocalModelStartup:
         if not fresh and cached and time.monotonic() - cached[0] < 3:
             return cached[1]
         from src.tls_overrides import llm_verify
+        from routes.model_routes import _openai_model_ids, _ollama_model_names
         try:
             async with httpx.AsyncClient(timeout=2, trust_env=False, verify=llm_verify()) as client:
                 response = await client.get(build_models_url(endpoint.base_url), headers=build_headers(endpoint.api_key, endpoint.base_url))
             body = response.json() if response.is_success else {}
-            online = response.is_success and isinstance(body, dict) and bool(body.get('data') or body.get('models'))
+            online = response.is_success and bool(_openai_model_ids(body) or _ollama_model_names(body))
             status = {'alive': online, 'loading': response.status_code == 503}
         except (httpx.HTTPError, ValueError):
             status = {'alive': False, 'loading': False}
