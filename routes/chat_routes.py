@@ -3486,6 +3486,7 @@ def setup_chat_routes(
         # persistent memory, past chats, or other identity-linked data.
         if incognito:
             disabled_tools.update({
+                "search_knowledge",  # persistent personal/shared documents
                 "manage_memory",      # persistent memory store
                 "search_chats",       # past chat history
                 "manage_skills",      # skill presets tied to user

@@ -8,6 +8,7 @@ import os
 import re
 import time
 from dataclasses import dataclass, field
+from types import SimpleNamespace
 from typing import Any, Optional
 
 from core.models import ChatMessage
@@ -1107,10 +1108,16 @@ async def build_chat_context(
         if continuation_context_message
         else message
     )
+    context_session = sess
+    if incognito:
+        context_session = SimpleNamespace(
+            endpoint_url=sess.endpoint_url, model=sess.model, headers=sess.headers,
+            history=_incognito_messages(session_id),
+        )
     from src.pending_action import pending_document_objective
     task_history = [
         item if isinstance(item, dict) else {"role": item.role, "content": item.content, "metadata": getattr(item, "metadata", None)}
-        for item in (getattr(sess, "history", None) or [])
+        for item in (getattr(context_session, "history", None) or [])
     ]
     pending_objective = pending_document_objective(task_history, context_message)
     casual_low_signal = _is_casual_low_signal(context_message) and not pending_objective
@@ -1144,7 +1151,7 @@ async def build_chat_context(
     # the primer system message IS the knowledge base. Injecting global memory
     # or personal-doc RAG on every turn pulls in keyword-matched but off-topic
     # facts ("wrong data") and competes with the report, so suppress both here.
-    is_research_spinoff = _session_is_research_spinoff(sess)
+    is_research_spinoff = _session_is_research_spinoff(context_session)
     if is_research_spinoff:
         mem_enabled = False
 
@@ -1179,7 +1186,7 @@ async def build_chat_context(
     )
     _preface_kwargs = dict(
         message=_ctx_msg,
-        session=sess,
+        session=context_session,
         use_web=use_web_val and not skip_web,
         use_memory=mem_enabled,
         time_filter=time_filter,
@@ -1200,8 +1207,7 @@ async def build_chat_context(
         and not is_research_spinoff
     ):
         use_rag_val = True
-    if use_rag is not None or is_research_spinoff or casual_low_signal or use_rag_val:
-        _preface_kwargs["use_rag"] = use_rag_val
+    _preface_kwargs["use_rag"] = use_rag_val
     def _build_preface():
         # Runs in a worker thread: auto-search and query extraction block for seconds.
         # Used memories are tracked per thread, so read them in the same thread.

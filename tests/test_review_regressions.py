@@ -403,6 +403,7 @@ async def test_build_chat_context_incognito_disables_skills_and_does_not_duplica
         endpoint_url="http://localhost:8000/v1",
         model="test-model",
         headers={},
+        history=[{"role": "user", "content": "saved private search subject"}],
         messages=[],
         get_context_messages=lambda: list(sess.messages),
     )
@@ -421,14 +422,20 @@ async def test_build_chat_context_incognito_disables_skills_and_does_not_duplica
         request=request,
         chat_handler=chat_handler,
         chat_processor=chat_processor,
-        message="hello",
+        message="Search for its opening hours",
         session_id="s1",
         incognito=True,
     )
 
-    user_messages = [m for m in ctx.messages if m.get("role") == "user" and m.get("content") == "hello"]
+    user_messages = [m for m in ctx.messages if m.get("role") == "user" and m.get("content") == "Search for its opening hours"]
     assert len(user_messages) == 1
     assert preface_options["use_skills"] is False
+    assert preface_options.get("use_rag") is False
+    from src.chat_processor import _search_query_request
+    query_request = _search_query_request("Search for its opening hours", preface_options["session"])
+    assert "saved private search subject" not in query_request
+    assert preface_options["session"].history == chat_helpers._incognito_messages("s1")
+    assert sess.history == [{"role": "user", "content": "saved private search subject"}]
 
 
 @pytest.mark.asyncio

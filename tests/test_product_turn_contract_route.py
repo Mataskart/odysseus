@@ -130,6 +130,34 @@ async def test_actual_route_constructs_contract_with_real_mcp_apis(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("options", [{"incognito": "true"}, {"use_rag": "false"}])
+async def test_private_document_search_stays_disabled_in_route_contract(monkeypatch, options):
+    from routes import chat_routes
+    from src import tool_security
+
+    endpoint = _chat_stream_endpoint(monkeypatch, "agent", {})
+    monkeypatch.setattr(tool_security, "owner_is_admin_or_single_user", lambda owner: True)
+    observed = []
+
+    async def capture_agent(*args, **kwargs):
+        observed.append(kwargs)
+        yield 'data: {"delta":"Document search is disabled."}\n\n'
+        yield "data: [DONE]\n\n"
+
+    monkeypatch.setattr(chat_routes, "stream_agent_loop", capture_agent)
+    request = _RouteRequest("agent")
+    request._form.update(options)
+    response = await endpoint(request)
+    async for _ in response.body_iterator:
+        pass
+
+    assert len(observed) == 1
+    assert "search_knowledge" in observed[0]["disabled_tools"]
+    assert observed[0]["tool_policy"].blocks("search_knowledge")
+    assert "search_knowledge" not in observed[0]["turn_contract"].executable
+
+
+@pytest.mark.asyncio
 async def test_native_product_browser_turn_cannot_bypass_family_contract(
     monkeypatch, registered_mcp_manager,
 ):
