@@ -776,3 +776,19 @@ async def test_build_chat_context_skips_pre_web_for_agent_notes_turn(monkeypatch
     )
 
     assert captured["use_web"] is False
+
+
+def test_save_reply_keeps_suggested_commands_and_removes_native_tool_markup(monkeypatch):
+    sess = _FakeSession()
+    answer = 'Check the devices:\n\n```bash\nls -la /dev/loop*\ncat /proc/filesystems | grep -i iso9660\n```'
+    markup = '<tool_call>{"name":"bash","arguments":{"command":"pwd"}}</tool_call>'
+    monkeypatch.setattr('core.database.update_session_last_accessed', lambda *_: None)
+    monkeypatch.setattr(chat_helpers, '_append_sft_trace_record', lambda **_: None)
+    saved = []
+    save_assistant_response(
+        sess, SimpleNamespace(save_sessions=lambda: saved.append(True)), 'command-example',
+        answer + markup, {'round_texts': [answer]},
+    )
+    assert saved == [True]
+    assert sess.history[-1].content == answer
+    assert sess.history[-1].metadata['round_texts'] == [answer]

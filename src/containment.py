@@ -193,6 +193,7 @@ class ContainmentSpec:
     max_output_bytes: int = MAX_OUTPUT_CHARS
     max_memory_bytes: Optional[int] = None
     max_processes: Optional[int] = None
+    host_access: bool = False
 
     def __post_init__(self) -> None:
         # Freeze env into a read-only view over a private copy. The child's
@@ -211,7 +212,9 @@ class ContainmentSpec:
         containment, so a mechanism without it is not degraded — it gave the
         spec everything the spec wanted.
         """
-        asked = {FILESYSTEM, PROCESS_TREE, WALL_CLOCK}
+        asked = {PROCESS_TREE, WALL_CLOCK}
+        if not self.host_access:
+            asked.add(FILESYSTEM)
         if self.network == NETWORK_NONE:
             asked.add(NETWORK)
         if self.max_memory_bytes is not None:
@@ -267,6 +270,7 @@ class ContainmentGrant:
             "external": self.external,
             "requested": sorted(self.spec.requested),
             "network": self.spec.network,
+            "host_access": self.spec.host_access,
         }
         if self.endpoint:
             data["endpoint"] = self.endpoint
@@ -386,6 +390,8 @@ def _rlimit_dimensions(spec: ContainmentSpec) -> set[str]:
 
 
 def _bwrap_provides(spec: ContainmentSpec) -> frozenset[str]:
+    if spec.host_access:
+        return frozenset()
     # bwrap gives the private root and the workspace bind (filesystem), a new
     # PID namespace plus --die-with-parent (process_tree), and --unshare-net when the
     # spec asked for no network. The wall clock and the resource limits are
@@ -480,6 +486,7 @@ def _write_record(grant: ContainmentGrant) -> None:
         "degraded": list(grant.degraded),
         "unenforced_required": list(grant.unenforced_required),
         "required": sorted(grant.spec.required),
+        "host_access": grant.spec.host_access,
         "wall_clock_s": grant.spec.wall_clock_s,
         "max_memory_bytes": grant.spec.max_memory_bytes,
         "max_processes": grant.spec.max_processes,
@@ -547,6 +554,8 @@ def _validate_spec(spec: ContainmentSpec) -> ContainmentSpec:
     both modes: there is no report-only version of a workspace that is not a
     directory.
     """
+    if type(spec.host_access) is not bool:
+        raise ValueError("containment: host_access must be a boolean")
     unknown = set(spec.required) - DIMENSIONS
     if unknown:
         raise ValueError(
@@ -610,6 +619,7 @@ def agent_spec(
     Widening or narrowing it is a change to this module, reviewed as one.
     """
     overrides.pop("required", None)
+    overrides.pop("host_access", None)
     return ContainmentSpec(
         workspace=workspace,
         env=env,
@@ -847,6 +857,8 @@ def _bwrap_prefix(spec: ContainmentSpec) -> list[str]:
     """
     executable = shutil.which("bwrap")
     if not executable:
+        raise ContainmentUnavailable(spec.required, "bubblewrap")
+    if spec.host_access:
         raise ContainmentUnavailable(spec.required, "bubblewrap")
     args = [
         os.path.abspath(executable), "--die-with-parent", "--new-session", "--unshare-pid",
@@ -1565,6 +1577,7 @@ def reap_record(record: Mapping[str, Any], *, grace_s: float = 2.0) -> ReleaseOu
         env={},
         wall_clock_s=int(record.get("wall_clock_s") or 1),
         required=frozenset(record.get("required") or ()),
+        host_access=record.get("host_access", False),
     )
     grant = ContainmentGrant(
         id=str(record.get("id") or ""),

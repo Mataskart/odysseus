@@ -111,7 +111,7 @@ def launch(command: str, session_id: str, cwd: Optional[str] = None,
     validate_launch_spec(launch_resource, spec)
     grant = containment.acquire(spec, owner=f"bg:{session_id}")
     bounded_command = command
-    if containment.FILESYSTEM not in grant.enforced:
+    if containment.FILESYSTEM not in grant.enforced and not spec.host_access:
         bounded_command = _replace_workspace_alias(command, grant.workspace)
     result_path = _JOBS_DIR / f"{job_id}.result.json"
     payload = {
@@ -120,6 +120,7 @@ def launch(command: str, session_id: str, cwd: Optional[str] = None,
         "spec": {
             "workspace": spec.workspace, "env": dict(spec.env), "wall_clock_s": spec.wall_clock_s,
             "required": sorted(spec.required), "network": spec.network,
+            "host_access": spec.host_access,
             "readonly_extra": list(spec.readonly_extra), "writable_extra": list(spec.writable_extra),
             "max_output_bytes": spec.max_output_bytes,
         },

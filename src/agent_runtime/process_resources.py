@@ -15,6 +15,7 @@ import os
 from pathlib import Path
 import re
 import threading
+import sys
 from uuid import uuid4
 from core.atomic_io import store_transaction
 
@@ -51,6 +52,14 @@ def seal_launch_scopes(authority):
                  for root in authority.resource_roots)
 
 
+def host_command_access_allowed(owner):
+    if sys.platform != "linux":
+        return False
+    from src.tool_execution import _owner_is_admin
+    owners = {name.strip() for name in os.environ.get("ODYSSEUS_HOST_COMMAND_OWNERS", "").split(",") if name.strip()}
+    return bool(owner and owner in owners and _owner_is_admin(owner))
+
+
 def seal_launch_scope(backend, root, *, env=None):
     from src.agent_tools.subprocess_tools import _owned_spec
     from src.tool_execution import _agent_subprocess_env
@@ -58,16 +67,17 @@ def seal_launch_scope(backend, root, *, env=None):
     env = _agent_subprocess_env() if env is None else env
     extra = tuple(Path(p).resolve().as_posix() for p in str(env.get("ODYSSEUS_PYTHON_TOOL_SITE_PACKAGES", "")).split(os.pathsep)
                   if p and os.path.isabs(p)) if backend.tool_id == "python" else ()
-    spec = _owned_spec(root.path, env, 3600, extra)
+    spec = _owned_spec(root.path, env, 3600, extra, owner=root.owner)
     return ProcessLaunchScope(backend, root, spec.required,
         tuple(PathObservation(str(Path(p).resolve()), FileObjectIdentity.observe(Path(p).resolve())) for p in spec.readonly_extra),
-        spec.network, spec.wall_clock_s)
+        spec.network, spec.wall_clock_s, spec.host_access)
 
 
 def validate_launch_spec(launch, spec):
     scope = launch.scope
     scope.validate()
     if (spec.workspace != scope.root.path or spec.required != scope.required or spec.network != scope.network
+            or spec.host_access != scope.host_access
             or spec.wall_clock_s > scope.max_runtime_s or spec.writable_extra
             or tuple(spec.readonly_extra) != tuple(r.path for r in scope.runtime_roots)):
         raise ResourceIdentityError("Producer launch boundary exceeds the sealed reservation")
@@ -210,6 +220,7 @@ def intersect_launch_scopes(parent, child):
     for left in parent:
         for right in child:
             if (left.backend != right.backend or not left.required <= right.required
+                    or (right.host_access and not left.host_access)
                     or right.max_runtime_s > left.max_runtime_s
                     or not set(right.runtime_roots) <= set(left.runtime_roots)
                     or (left.network == "none" and right.network != "none")):
@@ -337,7 +348,7 @@ def bind_process_operation(operation):
         raise TypeError("Process operation must be server-owned")
     if operation is not None:
         operation.validate()
-        if operation.launch is not None:
+        if operation.launch is not None and not operation.launch.scope.host_access:
             # One fresh authoritative scan for each execution binding. Resolution
             # and producer entry retain cheap exact identity checks; no scan is
             # reused across independent bindings or persisted in an approval.

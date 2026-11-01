@@ -500,7 +500,7 @@ def _wrap_workspace_namespace(
     return shlex.join(args)
 
 
-def _owned_spec(cwd: str, env: Optional[dict], timeout: int, readonly_extra: tuple = ()) -> containment.ContainmentSpec:
+def _owned_spec(cwd: str, env: Optional[dict], timeout: int, readonly_extra: tuple = (), *, owner=None) -> containment.ContainmentSpec:
     """Server-defined boundary shared by the native execution tools."""
     readonly = []
     for prefix in (sys.prefix, sys.base_prefix):
@@ -510,10 +510,22 @@ def _owned_spec(cwd: str, env: Optional[dict], timeout: int, readonly_extra: tup
             readonly.append(prefix)
     from src.tool_execution import _agent_subprocess_env
     clean_env = _agent_subprocess_env() if env is None else dict(env)
-    return containment.agent_spec(
+    spec = containment.agent_spec(
         cwd, clean_env, timeout,
         readonly_extra=tuple(dict.fromkeys([*readonly, *readonly_extra])),
     )
+    from src.agent_runtime.authority import active_request_authority
+    from src.agent_runtime.process_resources import host_command_access_allowed
+    authority = active_request_authority()
+    if owner is None and authority is not None:
+        owner = authority.owner
+    if host_command_access_allowed(owner):
+        from dataclasses import replace
+        import pwd
+        host_env = dict(spec.env)
+        host_env["HOME"] = pwd.getpwuid(os.getuid()).pw_dir
+        return replace(spec, env=host_env, host_access=True, required=frozenset({containment.WALL_CLOCK}))
+    return spec
 
 
 async def _run_owned_command(command, ctx: dict, *, tool: str, timeout: int, argv: bool = False,
@@ -539,7 +551,7 @@ async def _run_owned_command(command, ctx: dict, *, tool: str, timeout: int, arg
         )
         containment._update_record(grant.id, launch_generation=launch.generation)
         publish_launch(launch, authority, grant.id)
-        if containment.FILESYSTEM not in grant.enforced:
+        if containment.FILESYSTEM not in grant.enforced and not spec.host_access:
             if argv:
                 command = [*command[:-1], _replace_workspace_alias(command[-1], grant.workspace)]
             else:
@@ -620,7 +632,9 @@ class BashTool:
                 "error": "bash: sudo/privilege escalation is unavailable in agent execution",
                 "exit_code": 1,
             }
-        if re.search(r"\b(?:curl|wget)\b[^\n]*https?://", content, re.IGNORECASE):
+        from src.agent_runtime.process_resources import host_command_access_allowed
+        if (not host_command_access_allowed(ctx.get("owner"))
+                and re.search(r"\b(?:curl|wget)\b[^\n]*https?://", content, re.IGNORECASE)):
             return {
                 "error": (
                     "bash: ad-hoc HTTP downloads are disabled when native web tools are "
@@ -657,7 +671,7 @@ class BashTool:
                 ),
                 "exit_code": 1,
             }
-        if "/tmp/" in content:
+        if "/tmp/" in content and not host_command_access_allowed(ctx.get("owner")):
             isolated_tmp = _isolated_tmp_dir(agent_cwd())
             content = content.replace("/tmp/", isolated_tmp.rstrip("/") + "/")
         return await _run_owned_command(content, ctx, tool="bash", timeout=DEFAULT_BASH_TIMEOUT)
@@ -909,14 +923,16 @@ def _python_with_configured_import_paths(content: str, env: dict | None) -> str:
 class PythonTool:
     async def execute(self, content: str, ctx: dict) -> dict:
         from src.tool_execution import agent_cwd, _truncate
-        if re.search(
+        from src.agent_runtime.process_resources import host_command_access_allowed
+        http_access = re.search(
             r"\b(?:requests\.(?:get|post|put|delete|request)|urllib\.request(?:\.\w+)?|httpx\.(?:get|post|request))\s*\(",
             content,
             re.IGNORECASE,
         ) and re.search(r"https?://", content, re.IGNORECASE) or (
             re.search(r"[\"'](?:curl|wget)[\"']", content, re.IGNORECASE)
             and re.search(r"https?://", content, re.IGNORECASE)
-        ):
+        )
+        if http_access and not host_command_access_allowed(ctx.get("owner")):
             return {
                 "error": (
                     "python: ad-hoc HTTP access is disabled when native web tools are "
@@ -934,7 +950,7 @@ class PythonTool:
             require_launch("python", cwd=agent_cwd(), content=content)
         except ResourceIdentityError as error:
             return {"error": str(error), "exit_code": 1, "blocked": True, "failure_kind": "resource_identity_denied"}
-        if "/tmp/" in content:
+        if "/tmp/" in content and not host_command_access_allowed(ctx.get("owner")):
             isolated_tmp = _isolated_tmp_dir(agent_cwd())
             content = content.replace("/tmp/", isolated_tmp.rstrip("/") + "/")
         _subproc_env = ctx.get("subproc_env")

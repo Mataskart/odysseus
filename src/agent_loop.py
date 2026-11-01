@@ -15039,6 +15039,17 @@ def _build_system_prompt(
     ):
         agent_prompt += _local_computer_rules()
 
+    from src.agent_runtime.process_resources import host_command_access_allowed
+    if not suppress_local_context and host_command_access_allowed(owner):
+        agent_prompt += (
+            "\n\nNative command access: host mode is enabled for this user. "
+            "Bash and Python run with the server's normal Linux-user permissions; "
+            "absolute paths, /dev, /proc, /tmp, and the home directory refer to the "
+            "actual host. The workspace is the starting directory, not a shell "
+            "access boundary. This does not grant sudo/root access. Inspect before "
+            "diagnosing and distinguish failed commands from actual observations."
+        )
+
     # When creating email documents, instruct the AI on the format
     if relevant_tools and not suppress_local_context and (_EMAIL_TOOL_HINTS & set(relevant_tools)):
         if _has_recent_email_tool_context(messages):
@@ -37239,7 +37250,10 @@ async def stream_agent_loop(
                     "launches are unavailable for this turn. Do not retry shell or "
                     "Python commands, including through another tool. Use ls, glob, "
                     "grep or read_file if inspection is needed. You may answer a "
-                    "how-to question directly. If execution is necessary, explain "
+                    "how-to question directly, but the blocked command produced no "
+                    "system observations. State that limitation; do not infer device "
+                    "availability or kernel configuration from this error. "
+                    "If execution is necessary, explain "
                     "the block and ask for a narrower task folder using /workspace."
                 ),
             })

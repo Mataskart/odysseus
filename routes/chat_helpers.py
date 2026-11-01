@@ -1584,7 +1584,7 @@ def save_assistant_response(
     # persistence boundary so raw tool markup cannot survive in history.
     try:
         from src.tool_parsing import strip_tool_blocks
-        full_response = strip_tool_blocks(str(full_response or "")).strip()
+        full_response = strip_tool_blocks(str(full_response or ""), skip_fenced=True).strip()
     except Exception:
         full_response = str(full_response or "")
     full_response = clean_repeated_assistant_content(full_response)
