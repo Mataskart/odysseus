@@ -1,8 +1,8 @@
 """One presentation gate between agent execution and externally visible prose.
 
-Tool, progress and interaction events stay live. Answer deltas are held until
-the generator unwinds so a later replacement cannot conceal an earlier false
-claim. This consumes no provider calls. Cancellation closes the inner generator
+Tool and progress events stay live. Conversational prose is released at checked
+statement boundaries; execution claims and artifact completion remain gated.
+This consumes no provider calls. Cancellation closes the inner generator
 under the same journal/turn authority; it never emits a successful terminal event.
 """
 from __future__ import annotations
@@ -232,6 +232,8 @@ def with_completion_gate(func):
         journal.effects = (parent.effects if parent is not None and parent.effects is not None
                            else EffectLog(journal.run_id))
         answer_events: list[dict] = []
+        released_events: set[int] = set()
+        first_released_at = None
         metrics_events: list[dict] = []
         answer = ''
         has_final = False
@@ -297,7 +299,7 @@ def with_completion_gate(func):
                             first_answer_at = perf_counter()
                         # Boolean thinking=True marks a reasoning-only delta;
                         # a textual thinking companion must not hide an answer
-                        # delta. Both shapes remain buffered until the gate.
+                        # delta. Both shapes pass the same statement check.
                         if isinstance(data.get('thinking'), str):
                             answer_events.append({'delta': data['thinking'], 'thinking': True})
                             data = {key: value for key, value in data.items() if key != 'thinking'}
@@ -309,26 +311,50 @@ def with_completion_gate(func):
                                 has_final = False
                             answer += str(data.get('delta') or '')
                         answer_events.append(data)
+                        if _execution_obligation(requirements) or not str(data.get('delta') or '').endswith((' ', '\n', '\t')):
+                            continue
+                        draft = ''.join(str(event.get('delta') or event.get('content') or '')
+                                        for event in answer_events)
+                        complete_statement = re.search(r'(?:[.!?;]\s+|\n)$', draft)
+                        open_fence = draft.count('```') % 2 or draft.count('~~~') % 2
+                        if not complete_statement or open_fence:
+                            continue
+                        execution_claim = any(
+                            _current_run_claims(scoped, execution_required=True)
+                            for _, scoped in _unquoted_statements(draft)
+                        )
+                        if execution_claim:
+                            continue
+                        current = _ledger(journal, requirements)
+                        _, unsupported = _supported_prose(draft, current, current.evaluate())
+                        if unsupported:
+                            continue
+                        for index, event in enumerate(answer_events):
+                            if index in released_events:
+                                continue
+                            if first_released_at is None:
+                                first_released_at = perf_counter()
+                            released_events.add(index)
+                            yield _event(event)
                         continue
                     yield chunk
             if provider_error and not answer_events and not metrics_events:
                 yield provider_error
                 return
             presentation_replaced = False
-            if not provider_error and not has_final and requirements.required_artifacts:
+            if not provider_error and not has_final:
                 terminal_texts = next((event.get('data', {}).get('round_texts')
                                        for event in reversed(metrics_events)
                                        if isinstance(event.get('data', {}).get('round_texts'), list)
                                        and all(isinstance(text, str) for text in event['data']['round_texts'])), None)
                 if terminal_texts is not None:
                     terminal_answer = '\n\n'.join(text for text in terminal_texts if text.strip())
-                    if terminal_answer != answer:
+                    if terminal_answer.strip() != answer.strip():
                         # The loop can retract a rejected round while retaining
                         # its live deltas. Do not resurrect those buffered drafts
                         # after recovery. Terminal prose still passes this gate.
                         presentation_replaced = True
                         answer = terminal_answer
-                        answer_events = [event for event in answer_events if event.get('thinking') is True]
             ledger = _ledger(journal, requirements)
             decision = ledger.evaluate(exhausted=exhausted, awaiting_user=awaiting)
             if provider_error:
@@ -345,7 +371,7 @@ def with_completion_gate(func):
                             + (e['thinking'] if isinstance(e.get('thinking'), str) else '')
                             for e in answer_events)
             _, unsafe_draft = completion_answer(draft, ledger, presentation_decision)
-            if not answer.strip() and unsafe_draft:
+            if not answer.strip() and unsafe_draft and not presentation_replaced:
                 reason = reason or unsafe_draft
                 safe_answer, _ = completion_answer(draft, ledger, presentation_decision)
             if reason and _execution_obligation(requirements) and decision.can_complete and decision.status == CompletionStatus.UNVERIFIED:
@@ -363,7 +389,8 @@ def with_completion_gate(func):
             replaced_answer = not disclosure_only and bool(
                 presentation_replaced or reason or unsafe_draft or safe_answer != answer)
             if replaced_answer:
-                reasoning = [event for event in answer_events if event.get('thinking') is True]
+                reasoning = [event for index, event in enumerate(answer_events)
+                             if event.get('thinking') is True and index not in released_events]
                 _, unsafe_reasoning = completion_answer(
                     ''.join(str(event.get('delta') or '') for event in reasoning), ledger,
                     replace(presentation_decision, can_complete=True))
@@ -372,8 +399,9 @@ def with_completion_gate(func):
                         yield _event(event)
                 yield _event({'type': 'final_response', 'content': safe_answer})
             else:
-                for event in answer_events:
-                    yield _event(event)
+                for index, event in enumerate(answer_events):
+                    if index not in released_events:
+                        yield _event(event)
                 if disclosure_only:
                     yield _event({'delta': disclosure})
             if provider_error:
@@ -386,13 +414,15 @@ def with_completion_gate(func):
                 if ledger.effects:
                     metadata['effect_assessments'] = [entry['assessment'].to_dict() for entry in ledger.effects]
                 metadata['completion_gate'] = {
-                    'buffer_seconds': released_at - first_answer_at if first_answer_at is not None else 0,
-                    'first_visible_answer_seconds': released_at - started,
+                    'buffer_seconds': (first_released_at or released_at) - first_answer_at if first_answer_at is not None else 0,
+                    'first_visible_answer_seconds': (first_released_at or released_at) - started,
                     'additional_provider_calls': 0,
                     'answer_replaced': replaced_answer,
                 }
                 if replaced_answer:
-                    if not provider_error:
+                    if not provider_error and (
+                        not presentation_replaced or reason or unsafe_draft or safe_answer != answer
+                    ):
                         metadata['round_texts'] = [safe_answer]
                     metadata['completion_gate_reason'] = reason or unsafe_draft or 'receipt_summary'
                 elif disclosure_only and metadata.get('round_texts') and isinstance(metadata['round_texts'], list) \

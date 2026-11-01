@@ -6108,9 +6108,9 @@ def _single_email_uid_from_tool_output(raw: str) -> str:
 _INVISIBLE_RESPONSE_CHARS = "\u2063\u200b\u200c\u200d\ufeff"
 
 
-def _visible_response_text(text: str) -> str:
+def _visible_response_text(text: str, *, skip_fenced: bool = False) -> str:
     """Return model-visible prose, ignoring invisible provider separators."""
-    value = _strip_think_blocks(strip_tool_blocks(str(text or "")))
+    value = _strip_think_blocks(strip_tool_blocks(str(text or ""), skip_fenced=skip_fenced))
     # Some local Qwen chat templates suppress the opening <think> token while
     # still emitting its closing token. Everything before that orphan closer
     # is internal analysis; only the text after it belongs in chat.
@@ -30145,7 +30145,7 @@ async def stream_agent_loop(
                             timeout=60,
                         )
                         _raw_text = _raw or ""
-                        _synth = _visible_response_text(_raw_text)
+                        _synth = _visible_response_text(_raw_text, skip_fenced=True)
                         if (
                             _synth
                             and (
@@ -30169,6 +30169,7 @@ async def stream_agent_loop(
                         logger.warning(f"[agent] grace synthesis failed: {_e}")
                 if _synth:
                     yield f'data: {json.dumps({"delta": _synth})}\n\n'
+                    _round_prose_streamed = True
                     round_response += _synth
                     full_response += _synth
                 else:
@@ -30176,6 +30177,7 @@ async def stream_agent_loop(
                            "answer together. Want me to try a more specific question, "
                            "or summarize what I did find?")
                     yield f'data: {json.dumps({"delta": _fb})}\n\n'
+                    _round_prose_streamed = True
                     round_response += _fb
                     full_response += _fb
 
@@ -30241,7 +30243,9 @@ async def stream_agent_loop(
             },
         ).strip()
         if _ody_qwen_finetune_model or _qwen38_tool_router:
-            cleaned_round = _visible_response_text(cleaned_round)
+            cleaned_round = _visible_response_text(
+                cleaned_round, skip_fenced=(_is_api_model and not used_native and not guide_only)
+            )
             cleaned_round = _normalize_ody_qwen_text_artifacts(cleaned_round)
             if not tool_blocks and round_response and full_response.endswith(round_response):
                 full_response = full_response[:-len(round_response)] + cleaned_round
@@ -37219,6 +37223,26 @@ async def stream_agent_loop(
             not tool_result_is_successful(record.get("result") or {})
             for record in tool_result_records
         )
+        _launch_workspace_blocked = any(
+            (record.get("result") or {}).get("failure_kind") == "resource_identity_denied"
+            and "Launch boundary contains server control state" in str(
+                (record.get("result") or {}).get("error", "")
+            )
+            for record in tool_result_records
+        )
+        if _launch_workspace_blocked:
+            disabled_tools = set(disabled_tools or ()) | {"bash", "python", "manage_bg_jobs"}
+            messages.append({
+                "role": "system",
+                "content": (
+                    "The workspace contains protected application state, so process "
+                    "launches are unavailable for this turn. Do not retry shell or "
+                    "Python commands, including through another tool. Use ls, glob, "
+                    "grep or read_file if inspection is needed. You may answer a "
+                    "how-to question directly. If execution is necessary, explain "
+                    "the block and ask for a narrower task folder using /workspace."
+                ),
+            })
         _failed_mutation_attempts = _failed_workspace_mutation_attempts(
             tool_blocks,
             tool_result_records,
@@ -37717,7 +37741,7 @@ async def stream_agent_loop(
     # Do not persist raw textual tool-call JSON / role markers as assistant
     # prose. Local finetunes may emit those before the parser catches and
     # executes them; saved history should contain only the user-facing answer.
-    full_response = _visible_response_text(full_response)
+    full_response = _visible_response_text(full_response, skip_fenced=_is_api_model)
     if re.match(r"^Done\b", full_response, re.IGNORECASE):
         without_trailing_done = _strip_trailing_done(full_response)
         if without_trailing_done:

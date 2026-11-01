@@ -121,3 +121,22 @@ def test_child_launch_cannot_refresh_a_replaced_root(tmp_path):
     child = RequestAuthority("child", "alice", "thread", str(root), (OperationGrant("bash"),))
     with pytest.raises(ResourceIdentityError):
         parent.intersect(child)
+
+
+def test_home_workspace_block_explains_recovery_and_accepts_narrow_folder(tmp_path, monkeypatch):
+    from src import constants
+    from src.agent_runtime.process_resources import guard_launch_workspace
+
+    home = tmp_path / 'home'
+    downloads = home / 'Downloads'
+    downloads.mkdir(parents=True)
+    state = home / 'odysseus' / 'data' / 'app.db'
+    state.parent.mkdir(parents=True)
+    state.touch()
+    monkeypatch.setattr(constants, 'APP_DB', str(state))
+
+    with pytest.raises(ResourceIdentityError, match='narrower task folder with /workspace') as error:
+        guard_launch_workspace(FilesystemRoot.seal(home))
+    assert 'glob' in str(error.value)
+    assert 'cd does not change' in str(error.value)
+    guard_launch_workspace(FilesystemRoot.seal(downloads))

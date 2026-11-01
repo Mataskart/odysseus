@@ -179,3 +179,16 @@ def test_copy_handlers_route_through_copy_message_text():
         # The old behavior passed dataset.raw straight to the clipboard.
         assert "copyToClipboard(msgElement.dataset.raw" not in text, path
         assert "copyToClipboard(msgEl.dataset.raw" not in text, path
+
+
+@pytest.mark.parametrize('prefix', [
+    "Let me check what's available on your system:",
+    'I can explain how this works.',
+    'I will describe the options.',
+    'The user interface has two modes.',
+])
+def test_ordinary_answer_prefix_does_not_hide_reply(node_available, prefix):
+    text = prefix + '\n\nOn CachyOS, open the ISO with an archive manager.'
+    result = _extract_thinking_blocks(text)
+    assert result['content'] == text
+    assert result['thinkingBlocks'] == []

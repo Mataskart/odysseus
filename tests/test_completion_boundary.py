@@ -455,3 +455,82 @@ async def test_slice2_quoted_example_does_not_hide_an_unsupported_report():
     assert 'The docs say "5 passed".' in final
     assert 'I ran pytest' not in final
     assert 'The task is incomplete' not in final
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('thinking', [False, True])
+async def test_safe_statements_arrive_before_provider_finishes(thinking):
+    resume = asyncio.Event()
+    visible = asyncio.Event()
+    chunks = []
+
+    @with_completion_gate
+    async def stream(messages):
+        yield _event({'delta': 'On CachyOS, open the ISO', 'thinking': thinking})
+        yield _event({'delta': ' in an archive manager.\n', 'thinking': thinking})
+        await resume.wait()
+        yield _event({'delta': 'You can then extract its contents.', 'thinking': thinking})
+        yield _event({'type': 'metrics', 'data': {}})
+        yield DONE
+
+    async def collect():
+        async for chunk in stream([]):
+            chunks.append(chunk)
+            if 'archive manager' in chunk:
+                visible.set()
+
+    task = asyncio.create_task(collect())
+    try:
+        await asyncio.wait_for(visible.wait(), 2)
+        assert not task.done()
+    finally:
+        resume.set()
+        await task
+    events = [data for _, data in _frames(chunks) if isinstance(data, dict)]
+    deltas = [event for event in events if 'delta' in event]
+    assert ''.join(event['delta'] for event in deltas) == (
+        'On CachyOS, open the ISO in an archive manager.\nYou can then extract its contents.'
+    )
+    assert all(event['thinking'] is thinking for event in deltas)
+
+
+@pytest.mark.asyncio
+async def test_split_unsupported_execution_claim_never_streams():
+    @with_completion_gate
+    async def stream(messages):
+        for text in ['I ran ', 'pytest and all tests ', 'passed.\n']:
+            yield _event({'delta': text})
+        yield DONE
+
+    chunks = [chunk async for chunk in stream([])]
+    assert not any(data.get('delta') for _, data in _frames(chunks) if isinstance(data, dict))
+    assert 'I ran pytest' not in ''.join(chunks)
+
+
+@pytest.mark.asyncio
+async def test_terminal_answer_retracts_tool_preamble_without_duplication():
+    answer = 'On CachyOS, open the ISO in an archive manager.'
+
+    @with_completion_gate
+    async def stream(messages):
+        yield _event({'delta': 'Let me check your system.\n', 'round': 1})
+        yield _event({'type': 'tool_start', 'tool': 'bash', 'round': 1})
+        yield _event({'delta': answer, 'round': 2})
+        yield _event({'type': 'metrics', 'data': {'round_texts': ['', answer]}})
+        yield DONE
+
+    chunks = [chunk async for chunk in stream([])]
+    final = next(data for _, data in _frames(chunks) if isinstance(data, dict) and data.get('type') == 'final_response')
+    assert final['content'] == answer
+
+
+@pytest.mark.parametrize('prefix', [
+    'I can explain Proton.', 'I will describe the options.',
+    "Let me check what's available on your system:",
+])
+def test_save_preserves_unmarked_answer_prose(prefix):
+    from routes.chat_helpers import clean_thinking_for_save
+    text = prefix + '\n\nOn CachyOS, open the ISO in an archive manager.'
+    content, metadata = clean_thinking_for_save(text)
+    assert content == text
+    assert 'thinking' not in metadata

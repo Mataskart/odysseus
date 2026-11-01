@@ -742,7 +742,7 @@ def test_prefaced_promise_retries_and_executes_the_tool(monkeypatch, endpoint):
     )))
     assert len(requests) == 3
     assert [block.tool_type for block in executed] == ["manage_skills"], json.dumps(events)
-    assert any("I read your profile" in event.get("delta", "") for event in events)
+    assert any("I read your profile" in (event.get("content") or event.get("delta", "")) for event in events)
     assert not any(event.get("type") == "rounds_exhausted" for event in events)
 
 
@@ -827,7 +827,7 @@ def test_unattended_intent_nudge_cap_forces_final_answer(monkeypatch):
     )))
 
     assert not any(e.get("type") == "intent_nudge_exhausted" for e in events)
-    assert any("seven points" in str(e.get("delta") or "") for e in events)
+    assert any("seven points" in str(e.get("content") or e.get("delta") or "") for e in events)
 
 
 def test_unattended_force_answer_rejects_long_planning_tail(monkeypatch):
@@ -925,7 +925,7 @@ def test_unattended_optioned_clarification_forces_best_supported_answer(monkeypa
     )))
 
     assert len(seen) == 3
-    assert any("12 shots" in str(e.get("delta") or "") for e in events)
+    assert any("12 shots" in str(e.get("content") or e.get("delta") or "") for e in events)
 
 
 def test_emits_loop_breaker_triggered_when_loop_breaker_trips(monkeypatch):
@@ -4317,3 +4317,86 @@ def test_eval_local_network_tool_budget_forces_final_synthesis(monkeypatch):
     guard = next(e for e in events if e.get("type") == "loop_breaker_triggered")
     assert guard["reason"] == "local_network_tool_budget"
     assert len(rounds) < 20
+
+
+def test_protected_launch_recovers_with_file_tools_and_preserves_answer(monkeypatch, tmp_path):
+    _patch_common(monkeypatch)
+    monkeypatch.setattr(al, "blocked_tools_for_owner", lambda owner: set())
+    offered = []
+    executed = []
+    answer = 'On CachyOS, open the ISO in an archive manager.\n\n```bash\nbsdtar -tf installer.iso\n```'
+
+    async def provider(_candidates, messages, **kwargs):
+        offered.append({s['function']['name'] for s in kwargs.get('tools') or []})
+        if len(offered) == 1:
+            yield 'data: ' + json.dumps({'delta': "Let me check what's available on your system:\n\n"}) + '\n\n'
+            name, args = 'bash', {'command': 'which bsdtar'}
+        elif len(offered) == 2:
+            assert any('protected application state' in m.get('content', '') for m in messages if isinstance(m.get('content'), str))
+            name, args = 'glob', {'pattern': '*.iso'}
+        else:
+            yield 'data: ' + json.dumps({'delta': answer}) + '\n\n'
+            yield 'data: [DONE]\n\n'
+            return
+        yield 'data: ' + json.dumps({'type': 'tool_calls', 'calls': [
+            {'id': str(len(offered)), 'name': name, 'arguments': json.dumps(args)}
+        ]}) + '\n\n'
+        yield 'data: [DONE]\n\n'
+
+    async def execute(block, **kwargs):
+        executed.append(block.tool_type)
+        if block.tool_type == 'bash':
+            return 'bash: BLOCKED', {'error': 'Launch boundary contains server control state',
+                'exit_code': 1, 'blocked': True, 'failure_kind': 'resource_identity_denied'}
+        return 'glob', {'output': 'installer.iso', 'exit_code': 0}
+
+    monkeypatch.setattr(al, 'stream_llm_with_fallback', provider)
+    monkeypatch.setattr(al, 'execute_tool_block', execute)
+    events = _types(_collect(al.stream_agent_loop(
+        'http://x/v1', 'Qwen3.8-35B-A3B-Odysseus-v2-GGUF',
+        [{'role': 'user', 'content': 'Inspect the workspace with bash and glob, then explain how to open an ISO on CachyOS.'}],
+        relevant_tools={'bash', 'python', 'glob', 'read_file'}, forced_tools={'bash', 'glob'}, max_rounds=5,
+        workspace=str(tmp_path), owner='admin',
+    )))
+    assert executed == ['bash', 'glob']
+    assert 'bash' not in offered[1] and 'python' not in offered[1]
+    final = [e['content'] for e in events if e.get('type') == 'final_response'][-1]
+    assert final == answer
+    assert 'Let me check' not in final
+
+
+def test_forced_synthesis_emits_answer_once_and_keeps_example_commands(monkeypatch, tmp_path):
+    _patch_common(monkeypatch)
+    monkeypatch.setattr(al, "blocked_tools_for_owner", lambda owner: set())
+    calls = []
+    answer = 'On CachyOS, extract the ISO.\n\n```bash\nbsdtar -xf installer.iso\n```'
+
+    async def provider(*args, **kwargs):
+        calls.append(1)
+        if len(calls) < 3:
+            yield 'data: ' + json.dumps({'type': 'tool_calls', 'calls': [
+                {'id': str(len(calls)), 'name': 'bash', 'arguments': json.dumps({'command': 'which bsdtar' + ' ' * len(calls)})}
+            ]}) + '\n\n'
+        else:
+            yield 'data: ' + json.dumps({'delta': '<tool_call>\n<function=glob>\n<parameter=path>*.iso</parameter>\n</function>\n</tool_call>'}) + '\n\n'
+        yield 'data: [DONE]\n\n'
+
+    async def execute(block, **kwargs):
+        return 'bash: ERROR', {'error': 'inspection unavailable', 'exit_code': 1}
+
+    async def synthesis(**kwargs):
+        return answer
+
+    monkeypatch.setattr(al, 'stream_llm_with_fallback', provider)
+    monkeypatch.setattr(al, 'execute_tool_block', execute)
+    monkeypatch.setattr('src.llm_core.llm_call_async', synthesis)
+    events = _types(_collect(al.stream_agent_loop(
+        'http://x/v1', 'Qwen3.8-35B-A3B-Odysseus-v2-GGUF',
+        [{'role': 'user', 'content': 'Inspect the workspace with bash and glob, then explain how to open an ISO on CachyOS.'}],
+        relevant_tools={'bash', 'glob'}, forced_tools={'bash', 'glob'}, max_rounds=5, workspace=str(tmp_path), owner='admin',
+    )))
+    visible = ''.join(e.get('delta', '') for e in events if not e.get('thinking'))
+    assert visible.count('On CachyOS') == 1
+    assert 'bsdtar -xf installer.iso' in visible
+    metrics = next(e['data'] for e in events if e.get('type') == 'metrics')
+    assert metrics['round_texts'][-1] == answer

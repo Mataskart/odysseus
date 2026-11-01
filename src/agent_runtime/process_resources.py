@@ -391,7 +391,12 @@ def guard_launch_workspace(root):
                Path(constants.APP_DB), Path(constants.AUTH_FILE), Path(constants.SETTINGS_FILE))
     base = Path(root.path)
     if any(Path(p).resolve().is_relative_to(base) for p in control):
-        raise ResourceIdentityError("Launch boundary contains server control state")
+        raise ResourceIdentityError(
+            "Launch boundary contains server control state. Shell and Python launches "
+            "cannot use this workspace. Use ls, glob, grep or read_file for inspection; "
+            "for commands, ask the user to select a narrower task folder with /workspace. "
+            "Changing the command or using cd does not change the launch boundary."
+        )
     def unresolved(error):
         raise ResourceIdentityError("Launch workspace cannot be inspected") from error
     snapshot = None
